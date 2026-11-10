@@ -4,6 +4,7 @@ class Settings(BaseSettings):
     bot_token: str = ""
     database_url: str
     frontend_origin: str = "http://localhost:5173"
+    mini_app_url: str = "https://zer0life-mining.onrender.com"
     init_data_max_age_seconds: int = 86400
     zrl_token_name: str = "Zer0Life Labs"
     zrl_token_symbol: str = "ZRL"
