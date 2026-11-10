@@ -1,0 +1,54 @@
+databases:
+  - name: zer0life-mining-db
+    plan: free
+    region: frankfurt
+    databaseName: zer0life_mining_db
+    user: zer0life_mining_db_user
+
+services:
+  - type: web
+    name: zer0life-mining-api
+    runtime: python
+    plan: free
+    region: frankfurt
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: zer0life-mining-db
+          property: connectionString
+      - key: BOT_TOKEN
+        sync: false
+      - key: FRONTEND_ORIGIN
+        value: https://zer0life-mining.onrender.com
+      - key: ZRL_TOKEN_MINT
+        value: GPJjF6w38TYrNFUSkZSctW1dSoZSiu8CSFjgygjdtzuo
+      - key: ZRL_TOKEN_DECIMALS
+        value: "6"
+      - key: ON_CHAIN_PAYOUTS_ENABLED
+        value: "false"
+      - key: MINING_POOL_TOTAL_ZRL
+        value: "100000000"
+      - key: MINING_REWARDS_ALLOCATION_ZRL
+        value: "70000000"
+      - key: MINING_FUTURE_RESERVE_ZRL
+        value: "20000000"
+      - key: MINING_BONUS_ALLOCATION_ZRL
+        value: "10000000"
+      - key: MINING_POOL_DISTRIBUTION_MONTHS
+        value: "36"
+
+  - type: web
+    name: zer0life-mining
+    runtime: static
+    plan: free
+    region: frankfurt
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://zer0life-mining-api.onrender.com
