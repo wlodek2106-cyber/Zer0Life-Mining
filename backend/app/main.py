@@ -19,34 +19,8 @@ app.add_middleware(CORSMiddleware, allow_origins=[settings.frontend_origin], all
 @app.on_event("startup")
 async def startup():
     Base.metadata.create_all(bind=engine)
-    # Configure Telegram's default bot menu button to open the Mini App.
-    if settings.bot_token and settings.mini_app_url:
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.post(
-                    f"https://api.telegram.org/bot{settings.bot_token}/setChatMenuButton",
-                    json={"menu_button": {
-                        "type": "web_app",
-                        "text": "Open Mining",
-                        "web_app": {"url": settings.mini_app_url}
-                    }}
-                )
-                result = response.json()
-                print(f"Telegram Mini App menu setup: ok={result.get('ok', False)}")
-                webhook_secret = hashlib.sha256(settings.bot_token.encode()).hexdigest()
-                webhook_response = await client.post(
-                    f"https://api.telegram.org/bot{settings.bot_token}/setWebhook",
-                    json={
-                        "url": "https://zer0life-mining-api.onrender.com/telegram/webhook",
-                        "secret_token": webhook_secret,
-                        "allowed_updates": ["message"],
-                        "drop_pending_updates": False
-                    }
-                )
-                webhook_result = webhook_response.json()
-                print(f"Telegram webhook setup: ok={webhook_result.get('ok', False)} description={webhook_result.get('description', '')}")
-        except Exception as exc:
-            print(f"Telegram Mini App menu setup failed: {type(exc).__name__}")
+    # Telegram menu and webhook are owned by the existing Run 2.0 service.
+    # This separate Mining API must never change shared bot configuration.
 
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
