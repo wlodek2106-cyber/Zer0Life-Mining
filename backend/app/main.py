@@ -1,7 +1,9 @@
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from uuid import uuid4
-from fastapi import FastAPI, Depends, Header, HTTPException
+import hashlib
+import hmac
+from fastapi import FastAPI, Depends, Header, HTTPException, Request
 import httpx
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -31,8 +33,54 @@ async def startup():
                 )
                 result = response.json()
                 print(f"Telegram Mini App menu setup: ok={result.get('ok', False)}")
+                webhook_secret = hashlib.sha256(settings.bot_token.encode()).hexdigest()
+                webhook_response = await client.post(
+                    f"https://api.telegram.org/bot{settings.bot_token}/setWebhook",
+                    json={
+                        "url": "https://zer0life-mining-api.onrender.com/telegram/webhook",
+                        "secret_token": webhook_secret,
+                        "allowed_updates": ["message"],
+                        "drop_pending_updates": False
+                    }
+                )
+                webhook_result = webhook_response.json()
+                print(f"Telegram webhook setup: ok={webhook_result.get('ok', False)}")
         except Exception as exc:
             print(f"Telegram Mini App menu setup failed: {type(exc).__name__}")
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request):
+    if not settings.bot_token:
+        raise HTTPException(503, "Telegram bot is not configured")
+    expected = hashlib.sha256(settings.bot_token.encode()).hexdigest()
+    supplied = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(403, "Invalid Telegram webhook secret")
+    update = await request.json()
+    message = update.get("message") or {}
+    chat = message.get("chat") or {}
+    message_text = (message.get("text") or "").strip()
+    chat_id = chat.get("id")
+    command = message_text.split()[0].split("@")[0] if message_text else ""
+    if chat_id and command in {"/start", "/help"}:
+        welcome = (
+            "Welcome to Zer0Life Mining!\\n\\n"
+            "Open the Mini App to enter the virtual mining game. "
+            "Rewards are in-game only; real ZRL payouts are currently disabled."
+        )
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(
+                f"https://api.telegram.org/bot{settings.bot_token}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": welcome,
+                    "reply_markup": {"inline_keyboard": [[
+                        {"text": "Open Mining", "web_app": {"url": settings.mini_app_url}}
+                    ]]}
+                }
+            )
+    return {"ok": True}
+
 
 def current_user(authorization: str = Header(default=""), db: Session = Depends(get_db)):
     if not authorization.startswith("tma "):
