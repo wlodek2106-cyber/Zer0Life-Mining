@@ -19,7 +19,22 @@ app.add_middleware(CORSMiddleware, allow_origins=[settings.frontend_origin], all
 @app.on_event("startup")
 async def startup():
     Base.metadata.create_all(bind=engine)
-    # Telegram menu and webhook are owned by the existing Run 2.0 service.
+    # Register this service's own Telegram bot webhook. This token must belong only to @Zer0lifeMining_bot.
+    if settings.bot_token:
+        webhook_secret = hashlib.sha256(settings.bot_token.encode()).hexdigest()
+        async with httpx.AsyncClient(timeout=15) as client:
+            webhook_response = await client.post(
+                f"https://api.telegram.org/bot{settings.bot_token}/setWebhook",
+                json={
+                    "url": "https://zer0life-mining-api.onrender.com/telegram/webhook",
+                    "secret_token": webhook_secret,
+                    "allowed_updates": ["message"],
+                    "drop_pending_updates": False
+                }
+            )
+            webhook_result = webhook_response.json()
+            print(f"Mining Telegram webhook setup: ok={webhook_result.get('ok', False)} description={webhook_result.get('description', '')}")
+
     # This separate Mining API must never change shared bot configuration.
 
 @app.post("/telegram/webhook")
