@@ -44,7 +44,6 @@ services:
   - type: web
     name: zer0life-mining
     runtime: static
-    plan: free
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
