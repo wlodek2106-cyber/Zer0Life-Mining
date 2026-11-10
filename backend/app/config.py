@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    bot_token: str
+    bot_token: str = ""
     database_url: str
     frontend_origin: str = "http://localhost:5173"
     init_data_max_age_seconds: int = 86400
