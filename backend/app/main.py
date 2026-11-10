@@ -44,7 +44,7 @@ async def startup():
                     }
                 )
                 webhook_result = webhook_response.json()
-                print(f"Telegram webhook setup: ok={webhook_result.get('ok', False)}")
+                print(f"Telegram webhook setup: ok={webhook_result.get('ok', False)} description={webhook_result.get('description', '')}")
         except Exception as exc:
             print(f"Telegram Mini App menu setup failed: {type(exc).__name__}")
 
@@ -58,6 +58,7 @@ async def telegram_webhook(request: Request):
         raise HTTPException(403, "Invalid Telegram webhook secret")
     update = await request.json()
     message = update.get("message") or {}
+    print(f"Telegram webhook received: update_id={update.get('update_id')} has_message={bool(message)}")
     chat = message.get("chat") or {}
     message_text = (message.get("text") or "").strip()
     chat_id = chat.get("id")
@@ -69,7 +70,7 @@ async def telegram_webhook(request: Request):
             "Rewards are in-game only; real ZRL payouts are currently disabled."
         )
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(
+            send_response = await client.post(
                 f"https://api.telegram.org/bot{settings.bot_token}/sendMessage",
                 json={
                     "chat_id": chat_id,
@@ -79,6 +80,8 @@ async def telegram_webhook(request: Request):
                     ]]}
                 }
             )
+            send_result = send_response.json()
+            print(f"Telegram welcome send: http={send_response.status_code} ok={send_result.get('ok', False)} description={send_result.get('description', '')}")
     return {"ok": True}
 
 
