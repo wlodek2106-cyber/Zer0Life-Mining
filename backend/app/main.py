@@ -2,6 +2,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from uuid import uuid4
 from fastapi import FastAPI, Depends, Header, HTTPException
+import httpx
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
@@ -14,8 +15,24 @@ app = FastAPI(title="Zer0Life Mining API", version="0.19.0")
 app.add_middleware(CORSMiddleware, allow_origins=[settings.frontend_origin], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.on_event("startup")
-def startup():
+async def startup():
     Base.metadata.create_all(bind=engine)
+    # Configure Telegram's default bot menu button to open the Mini App.
+    if settings.bot_token and settings.mini_app_url:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(
+                    f"https://api.telegram.org/bot{settings.bot_token}/setChatMenuButton",
+                    json={"menu_button": {
+                        "type": "web_app",
+                        "text": "Open Mining",
+                        "web_app": {"url": settings.mini_app_url}
+                    }}
+                )
+                result = response.json()
+                print(f"Telegram Mini App menu setup: ok={result.get('ok', False)}")
+        except Exception as exc:
+            print(f"Telegram Mini App menu setup failed: {type(exc).__name__}")
 
 def current_user(authorization: str = Header(default=""), db: Session = Depends(get_db)):
     if not authorization.startswith("tma "):
