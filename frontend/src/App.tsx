@@ -40,6 +40,8 @@ export default function App() {
   const [busy, setBusy] = useState(true);
   const [sectionBusy, setSectionBusy] = useState(false);
   const [tab, setTab] = useState<Tab>("home");
+  const [walletBusy, setWalletBusy] = useState(false);
+  const [walletMessage, setWalletMessage] = useState("");
 
   function authHeaders() {
     const initData = window.Telegram?.WebApp?.initData || "";
@@ -94,6 +96,40 @@ export default function App() {
       setError(e instanceof Error ? e.message : "Ошибка загрузки истории");
     } finally {
       setSectionBusy(false);
+    }
+  }
+
+  async function connectPhantom() {
+    setWalletBusy(true);
+    setWalletMessage("");
+    setError("");
+    try {
+      const provider = window.phantom?.solana;
+      if (!provider) throw Error("Phantom не найден. Открой приложение в браузере с установленным Phantom.");
+      const connected = await provider.connect();
+      const address = connected.publicKey.toString();
+      const challengeResponse = await fetch(API + "/api/wallet/challenge", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ wallet_address: address }),
+      });
+      const challenge = await challengeResponse.json();
+      if (!challengeResponse.ok) throw Error(challenge.detail || "Не удалось создать проверку кошелька.");
+      const signed = await provider.signMessage(new TextEncoder().encode(challenge.message), "utf8");
+      const signature = btoa(Array.from(signed.signature).map((byte) => String.fromCharCode(byte)).join(""));
+      const verifyResponse = await fetch(API + "/api/wallet/verify", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ wallet_address: address, nonce: challenge.nonce, signature }),
+      });
+      const verified = await verifyResponse.json();
+      if (!verifyResponse.ok) throw Error(verified.detail || "Не удалось подтвердить подпись кошелька.");
+      setMe((current) => current ? { ...current, wallet_address: verified.wallet_address } : current);
+      setWalletMessage("Phantom успешно привязан. Подпись подтверждает владение адресом, переводов не выполнялось.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка подключения Phantom");
+    } finally {
+      setWalletBusy(false);
     }
   }
 
@@ -196,7 +232,9 @@ export default function App() {
         <div className="wallet-symbol">▣</div>
         <h3>{me?.wallet_address ? "Wallet linked" : "No wallet linked yet"}</h3>
         <p className="wallet-address">{me?.wallet_address || "Connect a Solana wallet to see its linked address here."}</p>
-        <div className="info-note">Wallet linking and on-chain transfers are not triggered from this menu. Never share your seed phrase or private key.</div>
+        <button className="wallet-connect-btn" onClick={connectPhantom} disabled={walletBusy}>{walletBusy ? "Connecting…" : me?.wallet_address ? "Verify / change Phantom wallet" : "Connect Phantom wallet"}</button>
+        {walletMessage && <div className="wallet-success" role="status">{walletMessage}</div>}
+        <div className="info-note">Phantom signs a one-time verification message. No transaction is sent and no private key or recovery phrase is requested. Wallet linking is not a token withdrawal.</div>
         <div className="detail-row"><span>On-chain payouts</span><b>{status?.on_chain_payouts_enabled ? "Enabled in API" : "Disabled"}</b></div>
       </section>}
 
