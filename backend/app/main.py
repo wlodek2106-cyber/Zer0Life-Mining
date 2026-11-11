@@ -424,6 +424,33 @@ async def treasury_status(admin: User = Depends(admin_user)):
         raise HTTPException(502, "Unable to read Treasury balance from Solana RPC")
 
 
+@app.get("/api/admin/partner-dashboard")
+def admin_partner_dashboard(admin: User = Depends(admin_user), db: Session = Depends(get_db)):
+    total = db.scalar(select(func.coalesce(func.sum(PartnerCommission.amount_zrl), 0))) or 0
+    total_rows = db.scalar(select(func.count()).select_from(PartnerCommission)) or 0
+    partners = db.scalar(select(func.count(func.distinct(PartnerCommission.beneficiary_telegram_id)))) or 0
+    by_level = []
+    for level in range(1, 4):
+        amount = db.scalar(select(func.coalesce(func.sum(PartnerCommission.amount_zrl), 0)).where(PartnerCommission.level == level)) or 0
+        count = db.scalar(select(func.count()).select_from(PartnerCommission).where(PartnerCommission.level == level)) or 0
+        by_level.append({"level": level, "rate": str(PARTNER_RATES[level] * 100) + "%", "pending_zrl": str(Decimal(str(amount))), "entries": count})
+    recent = db.scalars(select(PartnerCommission).order_by(PartnerCommission.created_at.desc()).limit(100)).all()
+    return {
+        "total_pending_zrl": str(Decimal(str(total))),
+        "commission_entries": total_rows,
+        "unique_partners": partners,
+        "by_level": by_level,
+        "recent": [{
+            "beneficiary_telegram_id": row.beneficiary_telegram_id,
+            "source_telegram_id": row.source_telegram_id,
+            "level": row.level,
+            "amount_zrl": str(row.amount_zrl),
+            "created_at": row.created_at.isoformat(),
+            "status": "pending"
+        } for row in recent],
+        "payouts_enabled": False
+    }
+
 @app.get("/api/admin/overview")
 def admin_overview(admin: User = Depends(admin_user), db: Session = Depends(get_db)):
     return {"users": db.scalar(select(func.count()).select_from(User)) or 0, "equipment": db.scalar(select(func.count()).select_from(Equipment)) or 0, "virtual_rewards": str(db.scalar(select(func.coalesce(func.sum(RewardLedger.amount_zrl),0)).where(RewardLedger.kind=="accrual")) or 0), "on_chain_payouts_enabled": False}
