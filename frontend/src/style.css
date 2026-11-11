@@ -30,3 +30,7 @@
 .deposit-panel p { margin: 0; color: var(--muted, #9aa5a0); font-size: 13px; line-height: 1.55; }
 .deposit-input { width: 100%; box-sizing: border-box; min-height: 46px; border: 1px solid rgba(150, 170, 160, .25); border-radius: 10px; background: rgba(0,0,0,.18); color: inherit; padding: 12px; font: inherit; font-size: 12px; }
 .deposit-address { color: #9ce6ae; font-size: 12px; text-decoration: none; overflow-wrap: anywhere; }
+
+.deposit-details{display:flex;flex-direction:column;gap:9px;padding:13px;border:1px solid rgba(120,220,150,.22);border-radius:12px;background:rgba(0,0,0,.14);overflow-wrap:anywhere}
+.deposit-details code{display:block;padding:10px;border-radius:8px;background:rgba(0,0,0,.25);color:#b4f38d;font-size:11px;overflow-wrap:anywhere;user-select:all}
+.deposit-details small{color:#aab9ad;font-size:11px}
