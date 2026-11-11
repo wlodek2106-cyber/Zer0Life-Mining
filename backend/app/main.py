@@ -12,7 +12,7 @@ from sqlalchemy import select, func
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
 from .db import Base, engine, get_db
-from .models import User, Equipment, UserEquipment, RewardLedger, Purchase, WalletChallenge, DepositTransaction
+from .models import User, Equipment, UserEquipment, RewardLedger, Purchase, WalletChallenge, DepositTransaction, DepositIntent
 from .auth import verify_telegram_init_data
 from .config import settings
 
