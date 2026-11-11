@@ -579,14 +579,18 @@ def release_matured_farming(user: User = Depends(current_user), db: Session = De
         FarmingPosition.status == "active"
     ).with_for_update()).all()
     released = Decimal("0")
+    maturity_rewards = Decimal("0")
     released_ids = []
     for position in positions:
         end = position.ends_at.replace(tzinfo=timezone.utc) if position.ends_at.tzinfo is None else position.ends_at
         if end > now:
             continue
-        position.status = "completed"
         principal = Decimal(str(position.principal_zrl))
+        final_reward = farming_reward_due(position, now)
+        position.claimed_reward_zrl = Decimal(str(position.claimed_reward_zrl)) + final_reward
+        position.status = "completed"
         released += principal
+        maturity_rewards += final_reward
         released_ids.append(position.id)
         db.add(RewardLedger(
             telegram_id=user.telegram_id,
@@ -594,8 +598,34 @@ def release_matured_farming(user: User = Depends(current_user), db: Session = De
             kind="farming_principal_return",
             idempotency_key=f"farming-release:{position.id}"
         ))
+        if final_reward > 0:
+            maturity_key = f"farming-maturity:{position.id}"
+            db.add(RewardLedger(
+                telegram_id=user.telegram_id,
+                amount_zrl=final_reward,
+                kind="farming_maturity_reward",
+                idempotency_key=maturity_key
+            ))
+            referrer_id = user.telegram_id
+            for level in range(1, 4):
+                edge = db.get(ReferralEdge, referrer_id)
+                if edge is None:
+                    break
+                beneficiary_id = edge.referrer_telegram_id
+                commission_amount = (final_reward * PARTNER_RATES[level]).quantize(Decimal("0.000000001"))
+                if commission_amount > 0:
+                    db.add(PartnerCommission(
+                        beneficiary_telegram_id=beneficiary_id,
+                        source_telegram_id=user.telegram_id,
+                        level=level,
+                        amount_zrl=commission_amount,
+                        source_claim_key=maturity_key
+                    ))
+                referrer_id = beneficiary_id
     if not released_ids:
         raise HTTPException(400, "No matured Farming principal is available to release")
-    user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + released
+    user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + released + maturity_rewards
     db.commit()
-    return {"ok": True, "released_principal_zrl": str(released), "position_ids": released_ids, "on_chain_transfer": False}
+    return {"ok": True, "released_principal_zrl": str(released),
+            "maturity_reward_zrl": str(maturity_rewards), "position_ids": released_ids,
+            "partner_commissions_pending": True, "on_chain_transfer": False}
