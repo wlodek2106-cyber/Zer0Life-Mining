@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
 from .db import Base, engine, get_db
-from .models import User, Equipment, UserEquipment, RewardLedger, Purchase, WalletChallenge, DepositTransaction, DepositIntent, FarmingPosition, ReferralProfile, ReferralEdge, PartnerCommission, DailyMiningClaim
+from .models import User, Equipment, UserEquipment, RewardLedger, Purchase, WalletChallenge, DepositTransaction, DepositIntent, FarmingPosition, ReferralProfile, ReferralEdge, PartnerCommission, DailyMiningClaim, MiningPoolState
 from .auth import verify_telegram_init_data
 from .config import settings
 
@@ -23,6 +23,14 @@ app.add_middleware(CORSMiddleware, allow_origins=[settings.frontend_origin], all
 @app.on_event("startup")
 async def startup():
     Base.metadata.create_all(bind=engine)
+    # Singleton row serializes reward issuance across all users and app replicas.
+    with Session(engine) as startup_db:
+        if startup_db.get(MiningPoolState, 1) is None:
+            startup_db.add(MiningPoolState(id=1, issued_rewards_zrl=0))
+            try:
+                startup_db.commit()
+            except IntegrityError:
+                startup_db.rollback()
     # Register this service's own Telegram bot webhook. This token must belong only to @Zer0lifeMining_bot.
     if settings.bot_token:
         webhook_secret = hashlib.sha256(settings.bot_token.encode()).hexdigest()
@@ -98,6 +106,22 @@ def admin_user(user: User = Depends(current_user)):
         raise HTTPException(403, "Admin access required")
     return user
 
+def lock_reward_pool(db: Session):
+    state = db.scalar(select(MiningPoolState).where(MiningPoolState.id == 1).with_for_update())
+    if state is None:
+        state = MiningPoolState(id=1, issued_rewards_zrl=0)
+        db.add(state)
+        db.flush()
+    return state
+
+def reward_pool_usage(db: Session) -> Decimal:
+    issued = db.scalar(select(func.coalesce(func.sum(RewardLedger.amount_zrl), 0)).where(
+        RewardLedger.kind.in_(("accrual", "farming_claim_internal", "farming_maturity_reward")),
+        RewardLedger.amount_zrl > 0
+    )) or 0
+    partner = db.scalar(select(func.coalesce(func.sum(PartnerCommission.amount_zrl), 0))) or 0
+    return Decimal(str(issued)) + Decimal(str(partner))
+
 def accrue(db: Session, user: User):
     rows = db.execute(select(UserEquipment, Equipment).join(Equipment, Equipment.id == UserEquipment.equipment_id).where(UserEquipment.telegram_id == user.telegram_id)).all()
     now = datetime.now(timezone.utc); earned = Decimal("0")
@@ -109,9 +133,13 @@ def accrue(db: Session, user: User):
             earned += Decimal(str(item.reward_per_day)) * Decimal(minutes) / Decimal(1440)
             owned.last_accrued_at = last + timedelta(minutes=minutes)
     if earned > 0:
-        key = f"accrual:{user.telegram_id}:{uuid4().hex}"
-        user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + earned
-        db.add(RewardLedger(telegram_id=user.telegram_id, amount_zrl=earned, kind="accrual", idempotency_key=key))
+        lock_reward_pool(db)
+        remaining = max(Decimal("0"), Decimal(str(settings.mining_rewards_allocation_zrl)) - reward_pool_usage(db))
+        earned = min(earned, remaining)
+        if earned > 0:
+            key = f"accrual:{user.telegram_id}:{uuid4().hex}"
+            user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + earned
+            db.add(RewardLedger(telegram_id=user.telegram_id, amount_zrl=earned, kind="accrual", idempotency_key=key))
         db.commit()
     return earned
 
