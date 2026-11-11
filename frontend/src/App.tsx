@@ -10,7 +10,9 @@ type Tab = "home" | "mining" | "farming" | "community" | "upgrade" | "rewards" |
 
 const tabs: { id: Tab; label: string; icon: string }[] = [
   { id: "home", label: "Home", icon: "⌂" },
-  { id: "mining", label: "Mining", icon: "⛏" },\n  { id: "farming", label: "Farming", icon: "🌱" },\n  { id: "community", label: "Community", icon: "♧" },
+  { id: "mining", label: "Mining", icon: "⛏" },
+  { id: "farming", label: "Farming", icon: "🌱" },
+  { id: "community", label: "Community", icon: "♧" },
   { id: "upgrade", label: "Upgrade", icon: "↗" },
   { id: "rewards", label: "Rewards", icon: "◇" },
   { id: "wallet", label: "Wallet", icon: "▣" },
@@ -195,7 +197,8 @@ export default function App() {
     if (!code) return;
     try { await fetch(API + "/api/referrals/bind", {method:"POST",headers:{...authHeaders(),"Content-Type":"application/json"},body:JSON.stringify({referral_code:code})}); } catch {}
   }
-\n  async function connectPhantom() {
+
+  async function connectPhantom() {
     setWalletBusy(true);
     setWalletMessage("");
     setError("");
@@ -237,7 +240,9 @@ export default function App() {
 
   useEffect(() => {
     if (tab === "upgrade") loadEquipment();
-    if (tab === "rewards") loadRewards(period);\n    if (tab === "farming") loadFarming();\n    if (tab === "community") loadCommunity();
+    if (tab === "rewards") loadRewards(period);
+    if (tab === "farming") loadFarming();
+    if (tab === "community") loadCommunity();
   }, [tab, period]);
 
   const title = tabs.find((item) => item.id === tab)?.label || "Home";
@@ -318,7 +323,8 @@ export default function App() {
         {leaderboard.map((x:any,i:number)=><article className="reward-item" key={x.telegram_id}><div><b>#{i+1} · {x.username}</b><small>{x.direct_referrals} direct referrals</small></div><strong>{x.rank}</strong></article>)}
         <div className="info-note">Partner percentages: Level 1 — 5%, Level 2 — 2%, Level 3 — 1%. Commissions are not yet credited or withdrawable.</div>
       </section>}
-\n      {tab === "upgrade" && <section className="content-card">
+
+      {tab === "upgrade" && <section className="content-card">
         <span className="eyebrow">BOOST YOUR PROGRESS</span><h2>Equipment catalog</h2>
         <p>Catalog loaded from the Mining API. Purchases are intentionally unavailable until real pricing and payment verification are implemented.</p>
         {sectionBusy && <div className="loading-line">Loading equipment…</div>}
