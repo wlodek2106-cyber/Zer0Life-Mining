@@ -6,11 +6,11 @@ type Me = { balance_zrl: string; wallet_address?: string | null; username?: stri
 type Equipment = { id: number; code: string; name: string; price_zrl: string; hashrate: string; reward_per_day: string };
 type Reward = { amount_zrl: string; kind: string; created_at: string };
 type Period = "day" | "week" | "month";
-type Tab = "home" | "mining" | "upgrade" | "rewards" | "wallet" | "profile";
+type Tab = "home" | "mining" | "farming" | "community" | "upgrade" | "rewards" | "wallet" | "profile";
 
 const tabs: { id: Tab; label: string; icon: string }[] = [
   { id: "home", label: "Home", icon: "⌂" },
-  { id: "mining", label: "Mining", icon: "⛏" },
+  { id: "mining", label: "Mining", icon: "⛏" },\n  { id: "farming", label: "Farming", icon: "🌱" },\n  { id: "community", label: "Community", icon: "♧" },
   { id: "upgrade", label: "Upgrade", icon: "↗" },
   { id: "rewards", label: "Rewards", icon: "◇" },
   { id: "wallet", label: "Wallet", icon: "▣" },
@@ -48,6 +48,12 @@ export default function App() {
   const [depositBusy, setDepositBusy] = useState(false);
   const [depositMessage, setDepositMessage] = useState("");
   const [depositIntent, setDepositIntent] = useState<{treasury_address:string;token_mint:string;memo_required:boolean;sender_wallet:string} | null>(null);
+  const [farmPositions, setFarmPositions] = useState<any[]>([]);
+  const [farmAmount, setFarmAmount] = useState("");
+  const [farmMessage, setFarmMessage] = useState("");
+  const [farmBusy, setFarmBusy] = useState(false);
+  const [referralData, setReferralData] = useState<any>(null);
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
 
   function authHeaders() {
     const initData = window.Telegram?.WebApp?.initData || "";
@@ -141,7 +147,55 @@ export default function App() {
     }
   }
 
-  async function connectPhantom() {
+
+  async function loadFarming() {
+    setSectionBusy(true); setError("");
+    try {
+      const response = await fetch(API + "/api/farming/positions", { headers: authHeaders() });
+      const data = await response.json(); if (!response.ok) throw Error(data.detail || "Не удалось загрузить Farming.");
+      setFarmPositions(Array.isArray(data) ? data : []);
+    } catch (e) { setError(e instanceof Error ? e.message : "Ошибка Farming"); }
+    finally { setSectionBusy(false); }
+  }
+  async function createFarm() {
+    setFarmBusy(true); setFarmMessage(""); setError("");
+    try {
+      const response = await fetch(API + "/api/farming/positions", { method:"POST", headers:{...authHeaders(),"Content-Type":"application/json"}, body:JSON.stringify({amount_zrl:farmAmount}) });
+      const data = await response.json(); if (!response.ok) throw Error(data.detail || "Не удалось открыть Farming.");
+      setFarmMessage("Farming открыт. Сумма заблокирована на 12 месяцев.");
+      setFarmAmount(""); await Promise.all([loadFarming(), load()]);
+    } catch(e) { setError(e instanceof Error ? e.message : "Ошибка открытия Farming"); }
+    finally { setFarmBusy(false); }
+  }
+  async function claimFarm() {
+    setFarmBusy(true); setFarmMessage(""); setError("");
+    try {
+      const response = await fetch(API + "/api/farming/claim", { method:"POST", headers:authHeaders() });
+      const data = await response.json(); if (!response.ok) throw Error(data.detail || "Claim недоступен.");
+      setFarmMessage("Начислено " + fmt(data.claimed_zrl) + " ZRL на внутренний баланс. Это не Solana-перевод.");
+      await Promise.all([loadFarming(), load()]);
+    } catch(e) { setError(e instanceof Error ? e.message : "Ошибка Claim"); }
+    finally { setFarmBusy(false); }
+  }
+  async function loadCommunity() {
+    setSectionBusy(true); setError("");
+    try {
+      const [r,l] = await Promise.all([
+        fetch(API + "/api/referrals/me", {headers:authHeaders()}),
+        fetch(API + "/api/leaderboard", {headers:authHeaders()})
+      ]);
+      const rd=await r.json(), ld=await l.json();
+      if(!r.ok || !l.ok) throw Error(rd.detail || ld.detail || "Не удалось загрузить Community.");
+      setReferralData(rd); setLeaderboard(ld.leaderboard || []);
+    } catch(e) { setError(e instanceof Error ? e.message : "Ошибка Community"); }
+    finally { setSectionBusy(false); }
+  }
+  async function bindStartReferral() {
+    const code = window.Telegram?.WebApp?.initDataUnsafe?.start_param || "";
+    if (!code) return;
+    try { await fetch(API + "/api/referrals/bind", {method:"POST",headers:{...authHeaders(),"Content-Type":"application/json"},body:JSON.stringify({referral_code:code})}); } catch {}
+  }
+\n  async function connectPhantom() {
     setWalletBusy(true);
     setWalletMessage("");
     setError("");
@@ -183,7 +237,7 @@ export default function App() {
 
   useEffect(() => {
     if (tab === "upgrade") loadEquipment();
-    if (tab === "rewards") loadRewards(period);
+    if (tab === "rewards") loadRewards(period);\n    if (tab === "farming") loadFarming();\n    if (tab === "community") loadCommunity();
   }, [tab, period]);
 
   const title = tabs.find((item) => item.id === tab)?.label || "Home";
@@ -236,7 +290,35 @@ export default function App() {
         <div className="info-note">This is virtual mining game accounting. It does not run real proof-of-work or mine cryptocurrency.</div>
       </section>}
 
-      {tab === "upgrade" && <section className="content-card">
+
+      {tab === "farming" && <section className="content-card">
+        <span className="eyebrow">12 MONTH ZRL FARMING</span><h2>Farming</h2>
+        <div className="info-note">Total scheduled reward: 155% over 12 months. Monthly rewards decrease step by step. Principal is locked for 12 months. Daily claim opens after 20:00 Warsaw time. All credits are internal; on-chain payouts are disabled.</div>
+        <label>Amount to lock (ZRL)</label>
+        <input className="deposit-input" inputMode="decimal" value={farmAmount} onChange={e=>setFarmAmount(e.target.value)} placeholder="Enter ZRL amount" />
+        <button className="wallet-connect-btn" onClick={createFarm} disabled={farmBusy || !farmAmount}>{farmBusy ? "Processing…" : "Start 12-month Farming"}</button>
+        <button className="wallet-connect-btn" onClick={claimFarm} disabled={farmBusy}>{farmBusy ? "Processing…" : "Claim daily rewards (20:00)"}</button>
+        {farmMessage && <div className="wallet-success" role="status">{farmMessage}</div>}
+        <h3>Your Farming positions</h3>
+        {sectionBusy && <div className="loading-line">Loading positions…</div>}
+        {!sectionBusy && farmPositions.length===0 && <div className="empty-state">No active Farming positions.</div>}
+        {farmPositions.map(p=><article className="reward-item" key={p.id}><div><b>{fmt(p.principal_zrl)} ZRL locked</b><small>Ends: {dateLabel(p.ends_at)}</small><small>Claimed: {fmt(p.claimed_reward_zrl)} ZRL</small></div><strong>{fmt(p.pending_reward_zrl)} ZRL pending</strong></article>)}
+      </section>}
+      {tab === "community" && <section className="content-card">
+        <span className="eyebrow">ZER0LIFE PARTNER PROGRAM</span><h2>Community & ranks</h2>
+        {sectionBusy && <div className="loading-line">Loading community…</div>}
+        {referralData && <>
+          <div className="detail-row"><span>Your referral code</span><b>{referralData.referral_code}</b></div>
+          <div className="detail-row"><span>Partner earnings recorded</span><b>{fmt(referralData.partner_earnings_zrl)} ZRL</b></div>
+          <div className="deposit-details"><b>Your invitation link</b><code>{referralData.referral_link}</code><button className="wallet-connect-btn" onClick={()=>navigator.clipboard?.writeText(referralData.referral_link)}>Copy invitation link</button></div>
+          {referralData.levels?.map((x:any)=><div className="detail-row" key={x.level}><span>Level {x.level} · {x.rate}</span><b>{x.count} members</b></div>)}
+        </>}
+        <h3>Leader ranks</h3>
+        <div className="info-note">Bronze → Silver → Gold → Platinum → Diamond. Rank thresholds are provisional and require final approval before rewards or privileges are attached.</div>
+        {leaderboard.map((x:any,i:number)=><article className="reward-item" key={x.telegram_id}><div><b>#{i+1} · {x.username}</b><small>{x.direct_referrals} direct referrals</small></div><strong>{x.rank}</strong></article>)}
+        <div className="info-note">Partner percentages: Level 1 — 5%, Level 2 — 2%, Level 3 — 1%. Commissions are not yet credited or withdrawable.</div>
+      </section>}
+\n      {tab === "upgrade" && <section className="content-card">
         <span className="eyebrow">BOOST YOUR PROGRESS</span><h2>Equipment catalog</h2>
         <p>Catalog loaded from the Mining API. Purchases are intentionally unavailable until real pricing and payment verification are implemented.</p>
         {sectionBusy && <div className="loading-line">Loading equipment…</div>}
