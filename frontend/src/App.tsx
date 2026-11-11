@@ -276,14 +276,7 @@ export default function App() {
           <span className="eyebrow">ADD ZRL TO YOUR ACCOUNT</span>
           <h3>Generate deposit details</h3>
           <p>Verify your Phantom wallet once, then send ZRL from that same wallet to the Treasury address. No memo or extra transaction instruction is needed.</p>
-          {!me?.wallet_address && <button className="wallet-connect-btn" onClick={connectPhantom} disabled={walletBusy}>{walletBusy ? "Connecting…" : "Connect and verify Phantom"}</button>}
-          {me?.wallet_address && <div className="deposit-details"><b>Verified sender wallet</b><code>{me.wallet_address}</code></div>}
-          <button className="wallet-connect-btn" onClick={createDepositIntent} disabled={depositBusy || !me?.wallet_address}>{depositBusy ? "Preparing…" : "Show deposit address"}</button>
-          {depositIntent && <div className="deposit-details">
-            <b>Treasury address</b><code>{depositIntent.treasury_address}</code>
-            <button className="wallet-connect-btn" onClick={() => navigator.clipboard?.writeText(depositIntent.treasury_address)}>Copy Treasury address</button>
-            <small>No memo required · ZRL only · Solana</small>
-          </div>}
+          <div className="info-note">Phantom connection has been removed from this screen. Automatic deposits to the shared Treasury are paused until individual deposit addresses are available, so deposits can be credited to the correct Telegram account without a memo or wallet connection.</div>
           <input className="deposit-input" value={depositSignature} onChange={(event) => setDepositSignature(event.target.value)} placeholder="Solana transaction signature" autoComplete="off" />
           <button className="wallet-connect-btn" onClick={verifyDeposit} disabled={depositBusy || !depositIntent}>{depositBusy ? "Checking on Solana…" : "Verify deposit"}</button>
           {depositMessage && <div className="wallet-success" role="status">{depositMessage}</div>}
