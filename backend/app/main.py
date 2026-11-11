@@ -426,6 +426,8 @@ async def treasury_status(admin: User = Depends(admin_user)):
 
 @app.get("/api/admin/partner-dashboard")
 def admin_partner_dashboard(admin: User = Depends(admin_user), db: Session = Depends(get_db)):
+    # The partner commission ledger is a liability/sub-ledger inside the 70m
+    # rewards allocation. It must never be added a second time to issued rewards.
     total = db.scalar(select(func.coalesce(func.sum(PartnerCommission.amount_zrl), 0))) or 0
     total_rows = db.scalar(select(func.count()).select_from(PartnerCommission)) or 0
     partners = db.scalar(select(func.count(func.distinct(PartnerCommission.beneficiary_telegram_id)))) or 0
@@ -435,7 +437,26 @@ def admin_partner_dashboard(admin: User = Depends(admin_user), db: Session = Dep
         count = db.scalar(select(func.count()).select_from(PartnerCommission).where(PartnerCommission.level == level)) or 0
         by_level.append({"level": level, "rate": str(PARTNER_RATES[level] * 100) + "%", "pending_zrl": str(Decimal(str(amount))), "entries": count})
     recent = db.scalars(select(PartnerCommission).order_by(PartnerCommission.created_at.desc()).limit(100)).all()
+    issued_kinds = ("accrual", "farming_claim_internal", "farming_maturity_reward")
+    issued = db.scalar(select(func.coalesce(func.sum(RewardLedger.amount_zrl), 0)).where(
+        RewardLedger.kind.in_(issued_kinds), RewardLedger.amount_zrl > 0
+    )) or 0
+    total_cap = Decimal(str(settings.mining_pool_total_zrl))
+    rewards_cap = Decimal(str(settings.mining_rewards_allocation_zrl))
+    reserve = Decimal(str(settings.mining_future_reserve_zrl))
+    bonus = Decimal(str(settings.mining_bonus_allocation_zrl))
+    issued = Decimal(str(issued))
     return {
+        "supply_cap_zrl": str(total_cap),
+        "rewards_allocation_zrl": str(rewards_cap),
+        "future_reserve_zrl": str(reserve),
+        "bonus_allocation_zrl": str(bonus),
+        "configured_allocations_total_zrl": str(rewards_cap + reserve + bonus),
+        "issued_rewards_zrl": str(issued),
+        "rewards_remaining_zrl": str(max(Decimal("0"), rewards_cap - issued)),
+        "allocation_config_valid": rewards_cap + reserve + bonus == total_cap,
+        "partner_commissions_included_in_rewards": True,
+        "partner_commissions_pending_zrl": str(Decimal(str(total))),
         "total_pending_zrl": str(Decimal(str(total))),
         "commission_entries": total_rows,
         "unique_partners": partners,
@@ -448,7 +469,8 @@ def admin_partner_dashboard(admin: User = Depends(admin_user), db: Session = Dep
             "created_at": row.created_at.isoformat(),
             "status": "pending"
         } for row in recent],
-        "payouts_enabled": False
+        "payouts_enabled": False,
+        "accounting_note": "Partner commissions are a sub-ledger within the rewards allocation and are not added to issued rewards a second time."
     }
 
 @app.get("/api/admin/overview")
