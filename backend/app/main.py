@@ -233,6 +233,54 @@ def stats(period: str = "day", user: User = Depends(current_user), db: Session =
     rows = db.scalars(select(RewardLedger).where(RewardLedger.telegram_id == user.telegram_id, RewardLedger.created_at >= since).order_by(RewardLedger.created_at.desc()).limit(100)).all()
     return {"period": period, "rewards": [{"amount_zrl": str(x.amount_zrl), "kind": x.kind, "created_at": x.created_at.isoformat()} for x in rows]}
 
+@app.get("/api/admin/treasury/status")
+async def treasury_status(admin: User = Depends(admin_user)):
+    """Read-only Treasury monitor. This endpoint never signs or sends transactions."""
+    address = settings.treasury_wallet_address.strip()
+    if not address:
+        return {"configured": False, "on_chain_payouts_enabled": False}
+    decode_solana_address(address)
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getTokenAccountsByOwner",
+        "params": [
+            address,
+            {"mint": settings.zrl_token_mint},
+            {"encoding": "jsonParsed", "commitment": settings.solana_commitment}
+        ]
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(settings.solana_rpc_url, json=payload)
+            response.raise_for_status()
+            data = response.json()
+        if data.get("error"):
+            raise HTTPException(502, "Solana RPC returned an error")
+        accounts = data.get("result", {}).get("value", [])
+        raw_total = Decimal("0")
+        for account in accounts:
+            info = account.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
+            amount = info.get("tokenAmount", {}).get("amount", "0")
+            raw_total += Decimal(str(amount))
+        divisor = Decimal(10) ** int(settings.zrl_token_decimals)
+        return {
+            "configured": True,
+            "network": settings.mining_network,
+            "treasury_wallet_address": address,
+            "token_mint": settings.zrl_token_mint,
+            "token_accounts": len(accounts),
+            "confirmed_balance_zrl": str(raw_total / divisor),
+            "commitment": settings.solana_commitment,
+            "on_chain_payouts_enabled": False,
+            "mode": "read_only"
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(502, "Unable to read Treasury balance from Solana RPC")
+
+
 @app.get("/api/admin/overview")
 def admin_overview(admin: User = Depends(admin_user), db: Session = Depends(get_db)):
     return {"users": db.scalar(select(func.count()).select_from(User)) or 0, "equipment": db.scalar(select(func.count()).select_from(Equipment)) or 0, "virtual_rewards": str(db.scalar(select(func.coalesce(func.sum(RewardLedger.amount_zrl),0)).where(RewardLedger.kind=="accrual")) or 0), "on_chain_payouts_enabled": False}
