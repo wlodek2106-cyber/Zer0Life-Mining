@@ -524,6 +524,25 @@ def referrals_me(user: User = Depends(current_user), db: Session = Depends(get_d
         "partner_payouts_enabled": False
     }
 
+@app.get("/api/referrals/commissions")
+def referral_commissions(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = db.scalars(
+        select(PartnerCommission)
+        .where(PartnerCommission.beneficiary_telegram_id == user.telegram_id)
+        .order_by(PartnerCommission.created_at.desc())
+        .limit(100)
+    ).all()
+    return {
+        "items": [{
+            "id": row.id,
+            "level": row.level,
+            "amount_zrl": str(row.amount_zrl),
+            "created_at": row.created_at.isoformat(),
+            "status": "pending"
+        } for row in rows],
+        "payouts_enabled": False
+    }
+
 @app.post("/api/referrals/bind")
 def bind_referral(payload: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
     code = str(payload.get("referral_code", "")).strip().upper()
