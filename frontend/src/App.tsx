@@ -45,7 +45,7 @@ export default function App() {
   const [depositSignature, setDepositSignature] = useState("");
   const [depositBusy, setDepositBusy] = useState(false);
   const [depositMessage, setDepositMessage] = useState("");
-  const [depositIntent, setDepositIntent] = useState<{treasury_address:string;memo_code:string;expires_at:string;token_mint:string} | null>(null);
+  const [depositIntent, setDepositIntent] = useState<{treasury_address:string;token_mint:string;memo_required:boolean;sender_wallet:string} | null>(null);
 
   function authHeaders() {
     const initData = window.Telegram?.WebApp?.initData || "";
@@ -106,7 +106,7 @@ export default function App() {
   async function createDepositIntent() {
     setDepositBusy(true); setError(""); setDepositMessage("");
     try {
-      const response = await fetch(API + "/api/deposits/intent", { method: "POST", headers: authHeaders() });
+      const response = await fetch(API + "/api/deposits/details", { headers: authHeaders() });
       const data = await response.json();
       if (!response.ok) throw Error(data.detail || "Не удалось создать код пополнения.");
       setDepositIntent(data);
@@ -271,25 +271,25 @@ export default function App() {
         <span className="eyebrow">ZER0LIFE TREASURY</span><h2>Shared wallet</h2>
         <div className="wallet-symbol">▣</div>
         <h3>Central Treasury Wallet</h3>
-        <p className="wallet-address">One shared Solana address for all users. Your deposit is assigned to your Telegram account with a unique memo. Phantom connection is not required.</p>
+        <p className="wallet-address">One shared Solana address. Deposits are matched to your Telegram account using your previously verified Phantom wallet. No memo is required.</p>
         <div className="deposit-panel">
           <span className="eyebrow">ADD ZRL TO YOUR ACCOUNT</span>
           <h3>Generate deposit details</h3>
-          <p>Generate a personal memo, send ZRL to the Treasury address with that exact memo included in the same Solana transaction, then submit the transaction signature below.</p>
-          <button className="wallet-connect-btn" onClick={createDepositIntent} disabled={depositBusy}>{depositBusy ? "Preparing…" : "Generate deposit details"}</button>
+          <p>Verify your Phantom wallet once, then send ZRL from that same wallet to the Treasury address. No memo or extra transaction instruction is needed.</p>
+          {!me?.wallet_address && <button className="wallet-connect-btn" onClick={connectPhantom} disabled={walletBusy}>{walletBusy ? "Connecting…" : "Connect and verify Phantom"}</button>}
+          {me?.wallet_address && <div className="deposit-details"><b>Verified sender wallet</b><code>{me.wallet_address}</code></div>}
+          <button className="wallet-connect-btn" onClick={createDepositIntent} disabled={depositBusy || !me?.wallet_address}>{depositBusy ? "Preparing…" : "Show deposit address"}</button>
           {depositIntent && <div className="deposit-details">
             <b>Treasury address</b><code>{depositIntent.treasury_address}</code>
             <button className="wallet-connect-btn" onClick={() => navigator.clipboard?.writeText(depositIntent.treasury_address)}>Copy Treasury address</button>
-            <b>Your personal memo</b><code>{depositIntent.memo_code}</code>
-            <button className="wallet-connect-btn" onClick={() => navigator.clipboard?.writeText(depositIntent.memo_code)}>Copy memo</button>
-            <small>Expires: {dateLabel(depositIntent.expires_at)}</small>
+            <small>No memo required · ZRL only · Solana</small>
           </div>}
           <input className="deposit-input" value={depositSignature} onChange={(event) => setDepositSignature(event.target.value)} placeholder="Solana transaction signature" autoComplete="off" />
           <button className="wallet-connect-btn" onClick={verifyDeposit} disabled={depositBusy || !depositIntent}>{depositBusy ? "Checking on Solana…" : "Verify deposit"}</button>
           {depositMessage && <div className="wallet-success" role="status">{depositMessage}</div>}
           <a className="deposit-address" href="https://solscan.io/account/4GEVDNM4VEtdRpwLcybsX2R4yhYL2vcYoNhoFsxY49Ex" target="_blank" rel="noreferrer">View Treasury on Solscan ↗</a>
         </div>
-        <div className="info-note">Only finalized transfers of the configured ZRL token with a valid unused memo are eligible. Never send SOL or other tokens to this deposit flow.</div>
+        <div className="info-note">Only finalized incoming transfers of the configured ZRL token from your verified Phantom wallet are eligible. No memo is required. Never send SOL or other tokens to this deposit flow.</div>
         <div className="detail-row"><span>On-chain payouts</span><b>Disabled until separately audited</b></div>
       </section>}
 
