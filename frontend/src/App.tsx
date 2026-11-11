@@ -322,14 +322,15 @@ export default function App() {
         {sectionBusy && <div className="loading-line">Loading community…</div>}
         {referralData && <>
           <div className="detail-row"><span>Your referral code</span><b>{referralData.referral_code}</b></div>
-          <div className="detail-row"><span>Partner earnings recorded</span><b>{fmt(referralData.partner_earnings_zrl)} ZRL</b></div>
+          <div className="detail-row"><span>Partner earnings pending</span><b>{fmt(referralData.partner_earnings_pending_zrl ?? referralData.partner_earnings_zrl)} ZRL</b></div>
+          {referralData.commission_by_level?.map((x:any)=><div className="detail-row" key={"commission-"+x.level}><span>Level {x.level} · {x.rate} commission</span><b>{fmt(x.pending_zrl)} ZRL pending</b></div>)}
           <div className="deposit-details"><b>Your invitation link</b><code>{referralData.referral_link}</code><button className="wallet-connect-btn" onClick={()=>navigator.clipboard?.writeText(referralData.referral_link)}>Copy invitation link</button></div>
           {referralData.levels?.map((x:any)=><div className="detail-row" key={x.level}><span>Level {x.level} · {x.rate}</span><b>{x.count} members</b></div>)}
         </>}
         <h3>Leader ranks</h3>
         <div className="info-note">Bronze → Silver → Gold → Platinum → Diamond. Rank thresholds are provisional and require final approval before rewards or privileges are attached.</div>
         {leaderboard.map((x:any,i:number)=><article className="reward-item" key={`${x.username}-${i}`}><div><b>#{i+1} · {x.username}</b><small>{x.direct_referrals} direct referrals</small></div><strong>{x.rank}</strong></article>)}
-        <div className="info-note">Partner percentages: Level 1 — 5%, Level 2 — 2%, Level 3 — 1%. Commissions are recorded as pending and are not spendable or withdrawable yet.</div>
+        <div className="info-note">Partner percentages: Level 1 — 5%, Level 2 — 2%, Level 3 — 1%. Commissions are pending by level and are not spendable or withdrawable. On-chain partner payouts are disabled.</div>
       </section>}
 
       {tab === "upgrade" && <section className="content-card">
