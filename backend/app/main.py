@@ -320,6 +320,15 @@ async def verify_deposit(payload: dict, user: User = Depends(current_user), db: 
     ).with_for_update())
     if intent is None:
         raise HTTPException(400, "A valid, unused deposit memo for this Telegram account was not found in this transaction")
+
+    # Attribute the transfer only to the wallet this Telegram user has
+    # explicitly verified. Do not infer ownership from token-balance metadata.
+    source_wallet = user.wallet_address
+    if not source_wallet:
+        raise HTTPException(400, "Link and verify your Phantom wallet before depositing")
+    if source_wallet not in source_wallets:
+        raise HTTPException(400, "The transaction sender does not match your verified wallet")
+
     ledger_key = "deposit:" + signature
     try:
         deposit = DepositTransaction(
