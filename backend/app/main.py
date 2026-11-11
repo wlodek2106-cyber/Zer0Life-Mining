@@ -444,11 +444,15 @@ def farming_reward_due(position: FarmingPosition, now: datetime) -> Decimal:
     principal = Decimal(str(position.principal_zrl))
     total_reward = principal * Decimal("1.55")
     elapsed_days = Decimal(str((now - start).total_seconds())) / Decimal("86400")
+    duration_days = Decimal(str((end - start).total_seconds())) / Decimal("86400")
     reward = Decimal("0")
     for month in range(12):
         month_start = Decimal(month * 365) / Decimal(12)
         month_end = Decimal((month + 1) * 365) / Decimal(12)
-        days = max(Decimal("0"), min(elapsed_days, month_end) - month_start)
+        if month_start >= duration_days:
+            break
+        segment_end = min(month_end, duration_days)
+        days = max(Decimal("0"), min(elapsed_days, segment_end) - month_start)
         if days:
             monthly_budget = total_reward * Decimal(MONTH_WEIGHTS[month]) / MONTH_WEIGHT_SUM
             reward += monthly_budget * days / (month_end - month_start)
@@ -457,16 +461,19 @@ def farming_reward_due(position: FarmingPosition, now: datetime) -> Decimal:
 @app.post("/api/farming/positions")
 def create_farming_position(payload: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
     amount = Decimal(str(payload.get("amount_zrl", "0")))
+    duration_months = int(payload.get("duration_months", 12))
+    if duration_months not in {1, 3, 6, 9, 12}:
+        raise HTTPException(400, "Choose a Farming package: 1, 3, 6, 9 or 12 months")
     if amount <= 0 or amount > Decimal(str(user.internal_balance_zrl)):
         raise HTTPException(400, "Invalid amount or insufficient available balance")
     now = datetime.now(timezone.utc)
     user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) - amount
     position = FarmingPosition(telegram_id=user.telegram_id, principal_zrl=amount, claimed_reward_zrl=0,
-        started_at=now, ends_at=now + timedelta(days=365), status="active")
+        started_at=now, ends_at=now + timedelta(days=365 * duration_months / 12), status="active")
     db.add(position)
     db.add(RewardLedger(telegram_id=user.telegram_id, amount_zrl=-amount, kind="farming_lock", idempotency_key="farm-lock:"+uuid4().hex))
     db.commit(); db.refresh(position)
-    return {"ok": True, "position_id": position.id, "principal_zrl": str(amount), "ends_at": position.ends_at.isoformat(), "total_reward_rate": "155%"}
+    return {"ok": True, "position_id": position.id, "principal_zrl": str(amount), "ends_at": position.ends_at.isoformat(), "duration_months": duration_months, "scheduled_reward_rate": str((Decimal("1.55") * sum(MONTH_WEIGHTS[:duration_months]) / MONTH_WEIGHT_SUM * 100).quantize(Decimal("0.01"))) + "%"}
 
 @app.get("/api/farming/positions")
 def farming_positions(user: User = Depends(current_user), db: Session = Depends(get_db)):
