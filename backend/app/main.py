@@ -202,16 +202,14 @@ def wallet_verify(payload: dict, user: User = Depends(current_user), db: Session
     db.commit()
     return {"ok": True, "wallet_address": address, "message": "Wallet ownership verified and linked."}
 
-@app.post("/api/deposits/intent")
-def create_deposit_intent(user: User = Depends(current_user), db: Session = Depends(get_db)):
+@app.get("/api/deposits/details")
+def deposit_details(user: User = Depends(current_user)):
     if not settings.treasury_wallet_address.strip():
         raise HTTPException(503, "Treasury wallet is not configured")
-    code = "Z0L-" + uuid4().hex.upper()
-    expires = datetime.now(timezone.utc) + timedelta(hours=2)
-    db.add(DepositIntent(telegram_id=user.telegram_id, memo_code=code, expires_at=expires, used=False))
-    db.commit()
-    return {"treasury_address": settings.treasury_wallet_address, "memo_code": code,
-            "expires_at": expires.isoformat(), "token_mint": settings.zrl_token_mint, "network": "Solana"}
+    if not user.wallet_address:
+        raise HTTPException(400, "Connect and verify your Phantom wallet before depositing")
+    return {"treasury_address": settings.treasury_wallet_address, "token_mint": settings.zrl_token_mint,
+            "network": "Solana", "memo_required": False, "sender_wallet": user.wallet_address}
 
 
 @app.post("/api/deposits/verify")
@@ -289,45 +287,24 @@ async def verify_deposit(payload: dict, user: User = Depends(current_user), db: 
     if amount <= 0:
         raise HTTPException(400, "Deposit amount must be positive")
 
-    memo_program = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
-    memo_values = []
-    message = (tx.get("transaction") or {}).get("message") or {}
-    instructions = list(message.get("instructions") or [])
-    for group in meta.get("innerInstructions") or []:
-        instructions.extend(group.get("instructions") or [])
-    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-    for instruction in instructions:
-        if instruction.get("programId") != memo_program:
-            continue
-        parsed = instruction.get("parsed")
-        if isinstance(parsed, dict):
-            memo_values.append(str(parsed.get("info", "")))
-        elif instruction.get("data"):
-            try:
-                value = 0
-                for char in instruction["data"]:
-                    value = value * 58 + alphabet.index(char)
-                raw = value.to_bytes((value.bit_length() + 7) // 8, "big") if value else b""
-                zeros = len(instruction["data"]) - len(instruction["data"].lstrip("1"))
-                memo_values.append((bytes(zeros) + raw).decode("utf-8", errors="ignore"))
-            except Exception:
-                pass
-    intent = db.scalar(select(DepositIntent).where(
-        DepositIntent.memo_code.in_(memo_values),
-        DepositIntent.telegram_id == user.telegram_id,
-        DepositIntent.used == False,
-        DepositIntent.expires_at > datetime.now(timezone.utc)
-    ).with_for_update())
-    if intent is None:
-        raise HTTPException(400, "A valid, unused deposit memo for this Telegram account was not found in this transaction")
-
-    # Attribute the transfer only to the wallet this Telegram user has
-    # explicitly verified. Do not infer ownership from token-balance metadata.
+    # Memo-free deposits: require a real outgoing ZRL balance delta from the
+    # user's previously verified Phantom wallet in this same transaction.
     source_wallet = user.wallet_address
     if not source_wallet:
-        raise HTTPException(400, "Link and verify your Phantom wallet before depositing")
-    if source_wallet not in source_wallets:
-        raise HTTPException(400, "The transaction sender does not match your verified wallet")
+        raise HTTPException(400, "Connect and verify your Phantom wallet before depositing")
+    owner_pre = {}
+    owner_post = {}
+    for item in pre:
+        if item.get("mint") == mint and item.get("owner"):
+            owner_pre[item["owner"]] = owner_pre.get(item["owner"], 0) + int(item.get("uiTokenAmount", {}).get("amount", "0"))
+    for item in post:
+        if item.get("mint") == mint and item.get("owner"):
+            owner_post[item["owner"]] = owner_post.get(item["owner"], 0) + int(item.get("uiTokenAmount", {}).get("amount", "0"))
+    source_delta = owner_post.get(source_wallet, 0) - owner_pre.get(source_wallet, 0)
+    if source_delta >= 0:
+        raise HTTPException(400, "No outgoing ZRL transfer from your verified Phantom wallet was found")
+    if -source_delta < delta_raw:
+        raise HTTPException(400, "The verified wallet's outgoing ZRL amount does not match the Treasury deposit")
 
     ledger_key = "deposit:" + signature
     try:
@@ -336,7 +313,6 @@ async def verify_deposit(payload: dict, user: User = Depends(current_user), db: 
             amount_zrl=amount, token_mint=mint, status="credited"
         )
         db.add(deposit)
-        intent.used = True
         user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + amount
         db.add(RewardLedger(
             telegram_id=user.telegram_id, amount_zrl=amount, kind="deposit",
