@@ -309,6 +309,15 @@ async def verify_deposit(payload: dict, user: User = Depends(current_user), db: 
     if -source_delta < delta_raw:
         raise HTTPException(400, "Outgoing ZRL amount does not cover the Treasury deposit")
 
+    # Security: a shared Treasury signature is not proof that the caller owns
+    # the source wallet. Only credit deposits from the wallet verified and
+    # linked to this Telegram account. This prevents claiming another user's tx.
+    linked_wallet = (user.wallet_address or "").strip()
+    if not linked_wallet:
+        raise HTTPException(403, "Link and verify your Solana wallet before claiming a Treasury deposit")
+    if not hmac.compare_digest(linked_wallet, source_wallet):
+        raise HTTPException(403, "Deposit source wallet does not match your verified wallet")
+
     ledger_key = "deposit:" + signature
     try:
         deposit = DepositTransaction(
