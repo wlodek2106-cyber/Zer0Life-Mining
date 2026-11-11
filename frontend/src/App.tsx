@@ -53,8 +53,6 @@ export default function App() {
     load();
   }, []);
 
-  const title = tabs.find((item) => item.id === tab)?.label || "Home";
-
   return (
     <main className="app-shell">
       <header className="topbar">
