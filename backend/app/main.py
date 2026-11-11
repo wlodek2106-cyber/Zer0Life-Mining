@@ -54,7 +54,9 @@ async def telegram_webhook(request: Request):
     chat = message.get("chat") or {}
     message_text = (message.get("text") or "").strip()
     chat_id = chat.get("id")
-    command = message_text.split()[0].split("@")[0] if message_text else ""
+    parts = message_text.split()
+    command = parts[0].split("@")[0] if parts else ""
+    referral_code = parts[1].strip().upper() if command == "/start" and len(parts) > 1 else ""
     if chat_id and command in {"/start", "/help"}:
         welcome = (
             "Welcome to Zer0Life Mining!\\n\\n"
@@ -68,7 +70,7 @@ async def telegram_webhook(request: Request):
                     "chat_id": chat_id,
                     "text": welcome,
                     "reply_markup": {"inline_keyboard": [[
-                        {"text": "Open Mining", "web_app": {"url": settings.mini_app_url}}
+                        {"text": "Open Mining", "web_app": {"url": settings.mini_app_url + (("&" if "?" in settings.mini_app_url else "?") + "ref=" + referral_code if referral_code else "")}}
                     ]]}
                 }
             )
@@ -487,20 +489,44 @@ def bind_referral(payload: dict, user: User = Depends(current_user), db: Session
         raise HTTPException(400, "Invalid referral code")
     if db.get(ReferralEdge, user.telegram_id):
         raise HTTPException(409, "Referrer is already set and cannot be changed")
+    ancestor_id = profile.telegram_id
+    visited = set()
+    while ancestor_id and ancestor_id not in visited:
+        if ancestor_id == user.telegram_id:
+            raise HTTPException(400, "Referral would create a cycle")
+        visited.add(ancestor_id)
+        parent = db.get(ReferralEdge, ancestor_id)
+        ancestor_id = parent.referrer_telegram_id if parent else None
     db.add(ReferralEdge(telegram_id=user.telegram_id, referrer_telegram_id=profile.telegram_id))
     db.commit()
     return {"ok": True}
 
 @app.get("/api/leaderboard")
 def leaderboard(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    users = db.scalars(select(User).order_by(User.internal_balance_zrl.desc()).limit(100)).all()
+    users = db.scalars(select(User)).all()
+    children = {}
+    for edge in db.scalars(select(ReferralEdge)).all():
+        children.setdefault(edge.referrer_telegram_id, []).append(edge.telegram_id)
     rows = []
-    for u in users:
-        direct = db.scalar(select(func.count()).select_from(ReferralEdge).where(ReferralEdge.referrer_telegram_id == u.telegram_id)) or 0
-        team_volume = db.scalar(select(func.coalesce(func.sum(FarmingPosition.principal_zrl),0)).where(FarmingPosition.telegram_id == u.telegram_id)) or 0
-        rank = "Diamond" if direct >= 50 and team_volume >= 1000000 else "Platinum" if direct >= 25 and team_volume >= 500000 else "Gold" if direct >= 10 and team_volume >= 100000 else "Silver" if direct >= 5 and team_volume >= 25000 else "Bronze"
-        rows.append({"telegram_id": u.telegram_id, "username": u.username or "Member", "rank": rank, "team_volume_zrl": str(team_volume), "direct_referrals": direct})
-    return {"leaderboard": rows}
+    for member in users:
+        direct_ids = children.get(member.telegram_id, [])
+        team_ids, frontier = set(), list(direct_ids)
+        while frontier:
+            child_id = frontier.pop()
+            if child_id == member.telegram_id or child_id in team_ids:
+                continue
+            team_ids.add(child_id)
+            frontier.extend(children.get(child_id, []))
+        volume = db.scalar(select(func.coalesce(func.sum(FarmingPosition.principal_zrl), 0)).where(
+            FarmingPosition.telegram_id.in_(team_ids), FarmingPosition.status == "active"
+        )) if team_ids else 0
+        volume = Decimal(str(volume or 0))
+        direct = len(direct_ids)
+        rank = "Diamond" if direct >= 50 and volume >= 1000000 else "Platinum" if direct >= 25 and volume >= 500000 else "Gold" if direct >= 10 and volume >= 100000 else "Silver" if direct >= 5 and volume >= 25000 else "Bronze"
+        rows.append({"username": member.username or "Member", "rank": rank, "team_volume_zrl": str(volume), "direct_referrals": direct})
+    order = {"Diamond": 5, "Platinum": 4, "Gold": 3, "Silver": 2, "Bronze": 1}
+    rows.sort(key=lambda row: (order[row["rank"]], Decimal(row["team_volume_zrl"]), row["direct_referrals"]), reverse=True)
+    return {"leaderboard": rows[:100], "rank_thresholds_status": "provisional"}
 
 @app.post("/api/farming/claim")
 def claim_farming(user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -525,6 +551,22 @@ def claim_farming(user: User = Depends(current_user), db: Session = Depends(get_
     user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + amount
     db.add(DailyMiningClaim(telegram_id=user.telegram_id, claim_date=claim_date, amount_zrl=amount, idempotency_key=key))
     db.add(RewardLedger(telegram_id=user.telegram_id, amount_zrl=amount, kind="farming_claim_internal", idempotency_key=key))
-    # Partner rewards are tracked in a separate commission ledger and are not minted into the Mining pool.
+    referrer_id = user.telegram_id
+    for level in range(1, 4):
+        edge = db.get(ReferralEdge, referrer_id)
+        if edge is None:
+            break
+        beneficiary_id = edge.referrer_telegram_id
+        commission_amount = (amount * PARTNER_RATES[level]).quantize(Decimal("0.000000001"))
+        if commission_amount > 0:
+            db.add(PartnerCommission(
+                beneficiary_telegram_id=beneficiary_id,
+                source_telegram_id=user.telegram_id,
+                level=level,
+                amount_zrl=commission_amount,
+                source_claim_key=key
+            ))
+        referrer_id = beneficiary_id
     db.commit()
-    return {"ok": True, "claimed_zrl": str(amount), "on_chain_transfer": False, "claim_date": claim_date}
+    return {"ok": True, "claimed_zrl": str(amount), "partner_commissions_recorded": True,
+            "partner_commissions_pending": True, "on_chain_transfer": False, "claim_date": claim_date}
