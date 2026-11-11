@@ -92,3 +92,15 @@ class MiningSnapshot(Base):
     active_miners: Mapped[int] = mapped_column(Integer)
     estimated_reward_per_day: Mapped[float] = mapped_column(Numeric(24, 9))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class DepositTransaction(Base):
+    __tablename__ = "deposit_transactions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    signature: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    telegram_id: Mapped[int] = mapped_column(ForeignKey("users.telegram_id"), index=True)
+    source_wallet: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    amount_zrl: Mapped[float] = mapped_column(Numeric(24, 9))
+    token_mint: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24), default="credited")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
