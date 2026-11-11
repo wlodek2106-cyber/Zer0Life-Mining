@@ -141,6 +141,7 @@ class ReferralEdge(Base):
 
 class PartnerCommission(Base):
     __tablename__ = "partner_commissions"
+    __table_args__ = (UniqueConstraint("beneficiary_telegram_id", "source_claim_key", "level"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     beneficiary_telegram_id: Mapped[int] = mapped_column(ForeignKey("users.telegram_id"), index=True)
     source_telegram_id: Mapped[int] = mapped_column(ForeignKey("users.telegram_id"), index=True)
