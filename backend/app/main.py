@@ -278,6 +278,10 @@ async def verify_deposit(payload: dict, user: User = Depends(current_user), db: 
         raise HTTPException(400, "Deposit amount must be positive")
 
     source_wallet = next(iter(source_wallets)) if len(source_wallets) == 1 else None
+    if not user.wallet_address:
+        raise HTTPException(400, "Link and verify your sending wallet before submitting a deposit")
+    if source_wallet is None or source_wallet != user.wallet_address:
+        raise HTTPException(403, "The transaction sender does not match your verified wallet")
     ledger_key = "deposit:" + signature
     try:
         deposit = DepositTransaction(
