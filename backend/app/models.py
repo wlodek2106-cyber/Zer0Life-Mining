@@ -114,3 +114,46 @@ class DepositIntent(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     used: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class FarmingPosition(Base):
+    __tablename__ = "farming_positions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(ForeignKey("users.telegram_id"), index=True)
+    principal_zrl: Mapped[float] = mapped_column(Numeric(24, 9))
+    claimed_reward_zrl: Mapped[float] = mapped_column(Numeric(24, 9), default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+class ReferralProfile(Base):
+    __tablename__ = "referral_profiles"
+    telegram_id: Mapped[int] = mapped_column(ForeignKey("users.telegram_id"), primary_key=True)
+    referral_code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+class ReferralEdge(Base):
+    __tablename__ = "referral_edges"
+    telegram_id: Mapped[int] = mapped_column(ForeignKey("users.telegram_id"), primary_key=True)
+    referrer_telegram_id: Mapped[int] = mapped_column(ForeignKey("users.telegram_id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+class PartnerCommission(Base):
+    __tablename__ = "partner_commissions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    beneficiary_telegram_id: Mapped[int] = mapped_column(ForeignKey("users.telegram_id"), index=True)
+    source_telegram_id: Mapped[int] = mapped_column(ForeignKey("users.telegram_id"), index=True)
+    level: Mapped[int] = mapped_column(Integer)
+    amount_zrl: Mapped[float] = mapped_column(Numeric(24, 9))
+    source_claim_key: Mapped[str] = mapped_column(String(96), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+class DailyMiningClaim(Base):
+    __tablename__ = "daily_mining_claims"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(ForeignKey("users.telegram_id"), index=True)
+    claim_date: Mapped[str] = mapped_column(String(10))
+    amount_zrl: Mapped[float] = mapped_column(Numeric(24, 9))
+    idempotency_key: Mapped[str] = mapped_column(String(96), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
