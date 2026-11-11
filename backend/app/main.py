@@ -570,3 +570,32 @@ def claim_farming(user: User = Depends(current_user), db: Session = Depends(get_
     db.commit()
     return {"ok": True, "claimed_zrl": str(amount), "partner_commissions_recorded": True,
             "partner_commissions_pending": True, "on_chain_transfer": False, "claim_date": claim_date}
+
+@app.post("/api/farming/release")
+def release_matured_farming(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    now = datetime.now(timezone.utc)
+    positions = db.scalars(select(FarmingPosition).where(
+        FarmingPosition.telegram_id == user.telegram_id,
+        FarmingPosition.status == "active"
+    ).with_for_update()).all()
+    released = Decimal("0")
+    released_ids = []
+    for position in positions:
+        end = position.ends_at.replace(tzinfo=timezone.utc) if position.ends_at.tzinfo is None else position.ends_at
+        if end > now:
+            continue
+        position.status = "completed"
+        principal = Decimal(str(position.principal_zrl))
+        released += principal
+        released_ids.append(position.id)
+        db.add(RewardLedger(
+            telegram_id=user.telegram_id,
+            amount_zrl=principal,
+            kind="farming_principal_return",
+            idempotency_key=f"farming-release:{position.id}"
+        ))
+    if not released_ids:
+        raise HTTPException(400, "No matured Farming principal is available to release")
+    user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + released
+    db.commit()
+    return {"ok": True, "released_principal_zrl": str(released), "position_ids": released_ids, "on_chain_transfer": False}
