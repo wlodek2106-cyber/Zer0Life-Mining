@@ -174,7 +174,7 @@ export default function App() {
     try {
       const response = await fetch(API + "/api/farming/release", {method:"POST",headers:authHeaders()});
       const data = await response.json(); if (!response.ok) throw Error(data.detail || "Principal release unavailable.");
-      setFarmMessage("Returned " + fmt(data.released_principal_zrl) + " ZRL principal to your internal balance. No Solana transfer was made.");
+      setFarmMessage("Returned " + fmt(data.released_principal_zrl) + " ZRL principal and credited " + fmt(data.maturity_reward_zrl || "0") + " ZRL final reward to your internal balance. No Solana transfer was made.");
       await Promise.all([loadFarming(), load()]);
     } catch(e) { setError(e instanceof Error ? e.message : "Farming release error"); }
     finally { setFarmBusy(false); }
@@ -330,8 +330,8 @@ export default function App() {
         </>}
         <h3>Leader ranks</h3>
         <div className="info-note">Bronze → Silver → Gold → Platinum → Diamond. Rank thresholds are provisional and require final approval before rewards or privileges are attached.</div>
-        {leaderboard.map((x:any,i:number)=><article className="reward-item" key={x.telegram_id}><div><b>#{i+1} · {x.username}</b><small>{x.direct_referrals} direct referrals</small></div><strong>{x.rank}</strong></article>)}
-        <div className="info-note">Partner percentages: Level 1 — 5%, Level 2 — 2%, Level 3 — 1%. Commissions are not yet credited or withdrawable.</div>
+        {leaderboard.map((x:any,i:number)=><article className="reward-item" key={`${x.username}-${i}`}><div><b>#{i+1} · {x.username}</b><small>{x.direct_referrals} direct referrals</small></div><strong>{x.rank}</strong></article>)}
+        <div className="info-note">Partner percentages: Level 1 — 5%, Level 2 — 2%, Level 3 — 1%. Commissions are recorded as pending and are not spendable or withdrawable yet.</div>
       </section>}
 
       {tab === "upgrade" && <section className="content-card">
