@@ -424,7 +424,15 @@ export default function App() {
       {tab === "admin" && adminAvailable && <section className="content-card">
         <span className="eyebrow">RESTRICTED ACCESS</span><h2>Partner programme admin</h2>
         <div className="info-note">Read-only overview. Pending commission amounts are internal ledger records. Payouts are disabled.</div>
-        <div className="detail-row"><span>Total pending commissions</span><b>{fmt(adminData?.total_pending_zrl)} ZRL</b></div>
+        <h3>Token allocation · 100,000,000 ZRL cap</h3>
+        <div className="detail-row"><span>Total supply cap</span><b>{fmt(adminData?.supply_cap_zrl)} ZRL</b></div>
+        <div className="detail-row"><span>Mining / Farming / Partner rewards pool</span><b>{fmt(adminData?.rewards_allocation_zrl)} ZRL</b></div>
+        <div className="detail-row"><span>Rewards issued</span><b>{fmt(adminData?.issued_rewards_zrl)} ZRL</b></div>
+        <div className="detail-row"><span>Rewards pool remaining</span><b>{fmt(adminData?.rewards_remaining_zrl)} ZRL</b></div>
+        <div className="detail-row"><span>Future reserve</span><b>{fmt(adminData?.future_reserve_zrl)} ZRL</b></div>
+        <div className="detail-row"><span>Bonus allocation</span><b>{fmt(adminData?.bonus_allocation_zrl)} ZRL</b></div>
+        <div className="info-note">{adminData?.allocation_config_valid ? "Allocation totals match the 100m ZRL cap." : "WARNING: configured allocation buckets do not add up to the total cap."} Partner commissions are included inside the rewards pool, not added on top. Pending commissions are a sub-ledger.</div>
+        <div className="detail-row"><span>Total pending partner commissions (included above)</span><b>{fmt(adminData?.total_pending_zrl)} ZRL</b></div>
         <div className="detail-row"><span>Commission entries</span><b>{fmt(adminData?.commission_entries)}</b></div>
         <div className="detail-row"><span>Unique partners</span><b>{fmt(adminData?.unique_partners)}</b></div>
         <h3>By referral level</h3>
