@@ -3,13 +3,16 @@ from decimal import Decimal
 from uuid import uuid4
 import hashlib
 import hmac
+import base64
 from fastapi import FastAPI, Depends, Header, HTTPException, Request
 import httpx
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
+from nacl.signing import VerifyKey
+from nacl.exceptions import BadSignatureError
 from .db import Base, engine, get_db
-from .models import User, Equipment, UserEquipment, RewardLedger, Purchase
+from .models import User, Equipment, UserEquipment, RewardLedger, Purchase, WalletChallenge
 from .auth import verify_telegram_init_data
 from .config import settings
 
@@ -124,6 +127,80 @@ def mining_status(user: User = Depends(current_user), db: Session = Depends(get_
     hashrate = sum(float(item.hashrate) * owned.quantity for owned, item in rows)
     daily = sum(float(item.reward_per_day) * owned.quantity for owned, item in rows)
     return {"hashrate": hashrate, "estimated_reward_per_day": daily, "active_miners": sum(owned.quantity for owned, item in rows), "balance_zrl": str(user.internal_balance_zrl), "mode": "virtual_game", "real_mining": False, "on_chain_payouts_enabled": False}
+
+def decode_solana_address(address: str) -> bytes:
+    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    number = 0
+    try:
+        for char in address:
+            number = number * 58 + alphabet.index(char)
+    except ValueError:
+        raise HTTPException(400, "Invalid Solana wallet address")
+    raw = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
+    leading_zeroes = len(address) - len(address.lstrip("1"))
+    decoded = b"\\x00" * leading_zeroes + raw
+    if len(decoded) != 32:
+        raise HTTPException(400, "Invalid Solana public key")
+    return decoded
+
+@app.post("/api/wallet/challenge")
+def wallet_challenge(payload: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    address = str(payload.get("wallet_address", "")).strip()
+    decode_solana_address(address)
+    now = datetime.now(timezone.utc)
+    nonce = uuid4().hex
+    expires = now + timedelta(minutes=5)
+    message = (
+        "Zer0Life Mining wallet verification\\n"
+        f"Telegram ID: {user.telegram_id}\\n"
+        f"Wallet: {address}\\n"
+        f"Nonce: {nonce}\\n"
+        f"Expires: {expires.isoformat()}"
+    )
+    db.add(WalletChallenge(telegram_id=user.telegram_id, wallet_address=address, nonce=nonce, expires_at=expires, used=False))
+    db.commit()
+    return {"message": message, "nonce": nonce, "expires_at": expires.isoformat()}
+
+@app.post("/api/wallet/verify")
+def wallet_verify(payload: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    address = str(payload.get("wallet_address", "")).strip()
+    nonce = str(payload.get("nonce", "")).strip()
+    signature_text = str(payload.get("signature", "")).strip()
+    if not address or not nonce or not signature_text:
+        raise HTTPException(400, "Wallet address, nonce and signature are required")
+    public_key = decode_solana_address(address)
+    challenge = db.scalar(
+        select(WalletChallenge)
+        .where(WalletChallenge.telegram_id == user.telegram_id, WalletChallenge.wallet_address == address, WalletChallenge.nonce == nonce)
+        .with_for_update()
+    )
+    if challenge is None or challenge.used:
+        raise HTTPException(400, "Wallet challenge is invalid or already used")
+    now = datetime.now(timezone.utc)
+    expires = challenge.expires_at
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if expires <= now:
+        raise HTTPException(400, "Wallet challenge expired. Please try again.")
+    message = (
+        "Zer0Life Mining wallet verification\\n"
+        f"Telegram ID: {user.telegram_id}\\n"
+        f"Wallet: {address}\\n"
+        f"Nonce: {nonce}\\n"
+        f"Expires: {expires.isoformat()}"
+    )
+    try:
+        signature = base64.b64decode(signature_text, validate=True)
+        VerifyKey(public_key).verify(message.encode("utf-8"), signature)
+    except (ValueError, BadSignatureError):
+        raise HTTPException(400, "Wallet signature verification failed")
+    existing = db.scalar(select(User).where(User.wallet_address == address, User.telegram_id != user.telegram_id))
+    if existing is not None:
+        raise HTTPException(409, "This wallet is already linked to another account")
+    user.wallet_address = address
+    challenge.used = True
+    db.commit()
+    return {"ok": True, "wallet_address": address, "message": "Wallet ownership verified and linked."}
 
 @app.get("/api/equipment")
 def equipment(db: Session = Depends(get_db), user: User = Depends(current_user)):
