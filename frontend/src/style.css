@@ -19,3 +19,7 @@
 .reward-item{justify-content:space-between}
 .reward-item>div{display:flex;flex-direction:column;gap:5px;min-width:0}
 .reward-item strong{white-space:nowrap;font-size:10px}
+
+.wallet-connect-btn{width:100%;margin-top:17px;padding:13px 16px;border:1px solid #8bdc4b;border-radius:12px;background:linear-gradient(120deg,#b2ff60,#72d63a);color:#071107;font-weight:800;font-size:12px;cursor:pointer}
+.wallet-connect-btn:disabled{opacity:.55;cursor:wait}
+.wallet-success{margin-top:12px;padding:12px;border:1px solid #4b9d57;border-radius:11px;background:#10291a;color:#a8f58d;font-size:10px;line-height:1.6}
