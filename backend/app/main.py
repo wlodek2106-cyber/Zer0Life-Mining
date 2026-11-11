@@ -502,7 +502,27 @@ def referrals_me(user: User = Depends(current_user), db: Session = Depends(get_d
         levels.append({"level": level, "count": len(children), "rate": str(PARTNER_RATES[level] * 100) + "%"})
         parent_ids = list(children)
     commissions = db.scalar(select(func.coalesce(func.sum(PartnerCommission.amount_zrl), 0)).where(PartnerCommission.beneficiary_telegram_id == user.telegram_id)) or 0
-    return {"referral_code": profile.referral_code, "referral_link": "https://t.me/Zer0lifeMining_bot?start=" + profile.referral_code, "levels": levels, "partner_earnings_zrl": str(commissions)}
+    commission_by_level = []
+    for level in range(1, 4):
+        level_total = db.scalar(select(func.coalesce(func.sum(PartnerCommission.amount_zrl), 0)).where(
+            PartnerCommission.beneficiary_telegram_id == user.telegram_id,
+            PartnerCommission.level == level
+        )) or 0
+        level_total = Decimal(str(level_total))
+        commission_by_level.append({
+            "level": level,
+            "rate": str(PARTNER_RATES[level] * 100) + "%",
+            "pending_zrl": str(level_total)
+        })
+    return {
+        "referral_code": profile.referral_code,
+        "referral_link": "https://t.me/Zer0lifeMining_bot?start=" + profile.referral_code,
+        "levels": levels,
+        "partner_earnings_zrl": str(Decimal(str(commissions))),
+        "partner_earnings_pending_zrl": str(Decimal(str(commissions))),
+        "commission_by_level": commission_by_level,
+        "partner_payouts_enabled": False
+    }
 
 @app.post("/api/referrals/bind")
 def bind_referral(payload: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
