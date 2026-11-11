@@ -12,7 +12,7 @@ from sqlalchemy import select, func
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
 from .db import Base, engine, get_db
-from .models import User, Equipment, UserEquipment, RewardLedger, Purchase, WalletChallenge
+from .models import User, Equipment, UserEquipment, RewardLedger, Purchase, WalletChallenge, DepositTransaction
 from .auth import verify_telegram_init_data
 from .config import settings
 
@@ -201,6 +201,108 @@ def wallet_verify(payload: dict, user: User = Depends(current_user), db: Session
     challenge.used = True
     db.commit()
     return {"ok": True, "wallet_address": address, "message": "Wallet ownership verified and linked."}
+
+@app.post("/api/deposits/verify")
+async def verify_deposit(payload: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """
+    Verify a user-submitted Solana transaction signature and credit only the
+    finalized net incoming balance of the configured ZRL mint to Treasury.
+    """
+    signature = str(payload.get("signature", "")).strip()
+    if len(signature) < 80 or len(signature) > 100:
+        raise HTTPException(400, "Invalid Solana transaction signature")
+    treasury = settings.treasury_wallet_address.strip()
+    mint = settings.zrl_token_mint.strip()
+    if not treasury:
+        raise HTTPException(503, "Treasury wallet is not configured")
+    decode_solana_address(treasury)
+    decode_solana_address(mint)
+
+    existing = db.scalar(select(DepositTransaction).where(DepositTransaction.signature == signature))
+    if existing:
+        if existing.telegram_id == user.telegram_id:
+            return {"ok": True, "already_credited": True, "amount_zrl": str(existing.amount_zrl)}
+        raise HTTPException(409, "This transaction has already been credited to another account")
+
+    payload_rpc = {
+        "jsonrpc": "2.0", "id": 1, "method": "getTransaction",
+        "params": [signature, {"encoding": "jsonParsed", "commitment": "finalized", "maxSupportedTransactionVersion": 0}]
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(settings.solana_rpc_url, json=payload_rpc)
+            response.raise_for_status()
+            result = response.json()
+    except Exception:
+        raise HTTPException(502, "Solana RPC is temporarily unavailable")
+    if result.get("error"):
+        raise HTTPException(502, "Solana RPC could not verify this transaction")
+    tx = result.get("result")
+    if not tx:
+        raise HTTPException(409, "Transaction is not finalized yet. Try again shortly.")
+    meta = tx.get("meta") or {}
+    if meta.get("err") is not None:
+        raise HTTPException(400, "Solana transaction failed")
+    if tx.get("slot") is None:
+        raise HTTPException(400, "Transaction has no confirmed slot")
+
+    pre = meta.get("preTokenBalances") or []
+    post = meta.get("postTokenBalances") or []
+    pre_by_account = {}
+    post_by_account = {}
+    source_wallets = set()
+    for item in pre:
+        if item.get("mint") == mint:
+            pre_by_account[item.get("accountIndex")] = int(item.get("uiTokenAmount", {}).get("amount", "0"))
+            owner = item.get("owner")
+            if owner and owner != treasury:
+                source_wallets.add(owner)
+    for item in post:
+        if item.get("mint") == mint:
+            post_by_account[item.get("accountIndex")] = int(item.get("uiTokenAmount", {}).get("amount", "0"))
+            owner = item.get("owner")
+            if owner and owner != treasury:
+                source_wallets.add(owner)
+
+    treasury_indices = set()
+    for item in pre + post:
+        if item.get("mint") == mint and item.get("owner") == treasury:
+            treasury_indices.add(item.get("accountIndex"))
+    if not treasury_indices:
+        raise HTTPException(400, "Transaction does not involve the configured Treasury ZRL token account")
+    delta_raw = sum(post_by_account.get(i, 0) - pre_by_account.get(i, 0) for i in treasury_indices)
+    if delta_raw <= 0:
+        raise HTTPException(400, "No incoming ZRL transfer to Treasury was found")
+    amount = Decimal(delta_raw) / (Decimal(10) ** int(settings.zrl_token_decimals))
+    if amount <= 0:
+        raise HTTPException(400, "Deposit amount must be positive")
+
+    source_wallet = next(iter(source_wallets)) if len(source_wallets) == 1 else None
+    ledger_key = "deposit:" + signature
+    try:
+        deposit = DepositTransaction(
+            signature=signature, telegram_id=user.telegram_id, source_wallet=source_wallet,
+            amount_zrl=amount, token_mint=mint, status="credited"
+        )
+        db.add(deposit)
+        user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + amount
+        db.add(RewardLedger(
+            telegram_id=user.telegram_id, amount_zrl=amount, kind="deposit",
+            idempotency_key=ledger_key
+        ))
+        db.commit()
+    except Exception:
+        db.rollback()
+        existing = db.scalar(select(DepositTransaction).where(DepositTransaction.signature == signature))
+        if existing and existing.telegram_id == user.telegram_id:
+            return {"ok": True, "already_credited": True, "amount_zrl": str(existing.amount_zrl)}
+        raise HTTPException(409, "This transaction may already have been processed")
+    return {
+        "ok": True, "already_credited": False, "amount_zrl": str(amount),
+        "balance_zrl": str(user.internal_balance_zrl), "signature": signature,
+        "explorer_url": "https://solscan.io/tx/" + signature
+    }
+
 
 @app.get("/api/equipment")
 def equipment(db: Session = Depends(get_db), user: User = Depends(current_user)):
