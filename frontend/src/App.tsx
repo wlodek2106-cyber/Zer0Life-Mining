@@ -19,7 +19,9 @@ const tabs: { id: Tab; label: string; icon: string }[] = [
 
 function fmt(value: string | number | undefined) {
   if (value === undefined || value === null || value === "") return "—";
-  return typeof value === "number" ? value.toLocaleString("en-US", { maximumFractionDigits: 4 }) : value;
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return String(value);
+  return numeric.toLocaleString("en-US", { maximumFractionDigits: 3 });
 }
 function dateLabel(value: string) {
   const date = new Date(value);
