@@ -755,8 +755,17 @@ def release_matured_farming(user: User = Depends(current_user), db: Session = De
         if end > now:
             continue
         principal = Decimal(str(position.principal_zrl))
-        final_reward = min(farming_reward_due(position, now), pool_remaining)
-        pool_remaining -= final_reward
+        referrers = []
+        referrer_id = user.telegram_id
+        for level in range(1, 4):
+            edge = db.get(ReferralEdge, referrer_id)
+            if edge is None:
+                break
+            referrers.append((level, edge.referrer_telegram_id))
+            referrer_id = edge.referrer_telegram_id
+        commission_rate = sum((PARTNER_RATES[level] for level, _ in referrers), Decimal("0"))
+        final_reward = min(farming_reward_due(position, now), pool_remaining / (Decimal("1") + commission_rate))
+        pool_remaining -= final_reward * (Decimal("1") + commission_rate)
         position.claimed_reward_zrl = Decimal(str(position.claimed_reward_zrl)) + final_reward
         position.status = "completed"
         released += principal
@@ -776,18 +785,12 @@ def release_matured_farming(user: User = Depends(current_user), db: Session = De
                 kind="farming_maturity_reward",
                 idempotency_key=maturity_key
             ))
-            referrer_id = user.telegram_id
-            for level in range(1, 4):
-                edge = db.get(ReferralEdge, referrer_id)
-                if edge is None:
-                    break
-                beneficiary_id = edge.referrer_telegram_id
+            for level, beneficiary_id in referrers:
                 commission_amount = (final_reward * PARTNER_RATES[level]).quantize(Decimal("0.000000001"))
                 if commission_amount > 0:
                     db.add(PartnerCommission(beneficiary_telegram_id=beneficiary_id,
                         source_telegram_id=user.telegram_id, level=level,
                         amount_zrl=commission_amount, source_claim_key=maturity_key))
-                referrer_id = beneficiary_id
     if not released_ids:
         raise HTTPException(400, "No matured Farming principal is available to release")
     user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + released + maturity_rewards
