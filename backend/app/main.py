@@ -617,6 +617,12 @@ def claim_farming(user: User = Depends(current_user), db: Session = Depends(get_
 @app.post("/api/farming/release")
 def release_matured_farming(user: User = Depends(current_user), db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
+    # Use the same account-level lock as open/claim so release cannot race
+    # with another balance mutation for this Telegram account.
+    locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
+    if locked_user is None:
+        raise HTTPException(401, "User account not found")
+    user = locked_user
     positions = db.scalars(select(FarmingPosition).where(
         FarmingPosition.telegram_id == user.telegram_id,
         FarmingPosition.status == "active"
@@ -668,7 +674,11 @@ def release_matured_farming(user: User = Depends(current_user), db: Session = De
     if not released_ids:
         raise HTTPException(400, "No matured Farming principal is available to release")
     user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + released + maturity_rewards
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Matured Farming positions have already been released")
     return {"ok": True, "released_principal_zrl": str(released),
             "maturity_reward_zrl": str(maturity_rewards), "position_ids": released_ids,
             "partner_commissions_pending": True, "on_chain_transfer": False}
