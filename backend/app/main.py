@@ -12,7 +12,7 @@ from sqlalchemy import select, func
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
 from .db import Base, engine, get_db
-from .models import User, Equipment, UserEquipment, RewardLedger, Purchase, WalletChallenge, DepositTransaction, DepositIntent
+from .models import User, Equipment, UserEquipment, RewardLedger, Purchase, WalletChallenge, DepositTransaction, DepositIntent, FarmingPosition, ReferralProfile, ReferralEdge, PartnerCommission, DailyMiningClaim
 from .auth import verify_telegram_init_data
 from .config import settings
 
@@ -415,3 +415,116 @@ async def treasury_status(admin: User = Depends(admin_user)):
 @app.get("/api/admin/overview")
 def admin_overview(admin: User = Depends(admin_user), db: Session = Depends(get_db)):
     return {"users": db.scalar(select(func.count()).select_from(User)) or 0, "equipment": db.scalar(select(func.count()).select_from(Equipment)) or 0, "virtual_rewards": str(db.scalar(select(func.coalesce(func.sum(RewardLedger.amount_zrl),0)).where(RewardLedger.kind=="accrual")) or 0), "on_chain_payouts_enabled": False}
+
+
+# Farming and community features. All amounts are internal ledger entries; on-chain payouts remain disabled.
+from zoneinfo import ZoneInfo
+WARSAW = ZoneInfo("Europe/Warsaw")
+MONTH_WEIGHTS = [12,11,10,9,8,7,6,5,4,3,2,1]
+MONTH_WEIGHT_SUM = Decimal("78")
+PARTNER_RATES = {1: Decimal("0.05"), 2: Decimal("0.02"), 3: Decimal("0.01")}
+
+def farming_reward_due(position: FarmingPosition, now: datetime) -> Decimal:
+    start = position.started_at.replace(tzinfo=timezone.utc) if position.started_at.tzinfo is None else position.started_at
+    end = position.ends_at.replace(tzinfo=timezone.utc) if position.ends_at.tzinfo is None else position.ends_at
+    now = min(now, end)
+    if now <= start:
+        return Decimal("0")
+    principal = Decimal(str(position.principal_zrl))
+    total_reward = principal * Decimal("1.55")
+    elapsed_days = Decimal(str((now - start).total_seconds())) / Decimal("86400")
+    reward = Decimal("0")
+    for month in range(12):
+        month_start = Decimal(month * 365) / Decimal(12)
+        month_end = Decimal((month + 1) * 365) / Decimal(12)
+        days = max(Decimal("0"), min(elapsed_days, month_end) - month_start)
+        if days:
+            monthly_budget = total_reward * Decimal(MONTH_WEIGHTS[month]) / MONTH_WEIGHT_SUM
+            reward += monthly_budget * days / (month_end - month_start)
+    return max(Decimal("0"), reward - Decimal(str(position.claimed_reward_zrl)))
+
+@app.post("/api/farming/positions")
+def create_farming_position(payload: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    amount = Decimal(str(payload.get("amount_zrl", "0")))
+    if amount <= 0 or amount > Decimal(str(user.internal_balance_zrl)):
+        raise HTTPException(400, "Invalid amount or insufficient available balance")
+    now = datetime.now(timezone.utc)
+    user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) - amount
+    position = FarmingPosition(telegram_id=user.telegram_id, principal_zrl=amount, claimed_reward_zrl=0,
+        started_at=now, ends_at=now + timedelta(days=365), status="active")
+    db.add(position)
+    db.add(RewardLedger(telegram_id=user.telegram_id, amount_zrl=-amount, kind="farming_lock", idempotency_key="farm-lock:"+uuid4().hex))
+    db.commit(); db.refresh(position)
+    return {"ok": True, "position_id": position.id, "principal_zrl": str(amount), "ends_at": position.ends_at.isoformat(), "total_reward_rate": "155%"}
+
+@app.get("/api/farming/positions")
+def farming_positions(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    now = datetime.now(timezone.utc)
+    rows = db.scalars(select(FarmingPosition).where(FarmingPosition.telegram_id == user.telegram_id).order_by(FarmingPosition.created_at.desc())).all()
+    return [{"id": p.id, "principal_zrl": str(p.principal_zrl), "pending_reward_zrl": str(farming_reward_due(p, now)),
+        "claimed_reward_zrl": str(p.claimed_reward_zrl), "started_at": p.started_at.isoformat(), "ends_at": p.ends_at.isoformat(), "status": p.status} for p in rows]
+
+@app.get("/api/referrals/me")
+def referrals_me(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    profile = db.get(ReferralProfile, user.telegram_id)
+    if profile is None:
+        profile = ReferralProfile(telegram_id=user.telegram_id, referral_code=hashlib.sha256(str(user.telegram_id).encode()).hexdigest()[:10].upper())
+        db.add(profile); db.commit()
+    levels = []
+    parent_ids = [user.telegram_id]
+    for level in range(1, 4):
+        children = db.scalars(select(ReferralEdge.telegram_id).where(ReferralEdge.referrer_telegram_id.in_(parent_ids))).all() if parent_ids else []
+        levels.append({"level": level, "count": len(children), "rate": str(PARTNER_RATES[level] * 100) + "%"})
+        parent_ids = list(children)
+    commissions = db.scalar(select(func.coalesce(func.sum(PartnerCommission.amount_zrl), 0)).where(PartnerCommission.beneficiary_telegram_id == user.telegram_id)) or 0
+    return {"referral_code": profile.referral_code, "referral_link": "https://t.me/Zer0lifeMining_bot?start=" + profile.referral_code, "levels": levels, "partner_earnings_zrl": str(commissions)}
+
+@app.post("/api/referrals/bind")
+def bind_referral(payload: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    code = str(payload.get("referral_code", "")).strip().upper()
+    profile = db.scalar(select(ReferralProfile).where(ReferralProfile.referral_code == code))
+    if not profile or profile.telegram_id == user.telegram_id:
+        raise HTTPException(400, "Invalid referral code")
+    if db.get(ReferralEdge, user.telegram_id):
+        raise HTTPException(409, "Referrer is already set and cannot be changed")
+    db.add(ReferralEdge(telegram_id=user.telegram_id, referrer_telegram_id=profile.telegram_id))
+    db.commit()
+    return {"ok": True}
+
+@app.get("/api/leaderboard")
+def leaderboard(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    users = db.scalars(select(User).order_by(User.internal_balance_zrl.desc()).limit(100)).all()
+    rows = []
+    for u in users:
+        direct = db.scalar(select(func.count()).select_from(ReferralEdge).where(ReferralEdge.referrer_telegram_id == u.telegram_id)) or 0
+        team_volume = db.scalar(select(func.coalesce(func.sum(FarmingPosition.principal_zrl),0)).where(FarmingPosition.telegram_id == u.telegram_id)) or 0
+        rank = "Diamond" if direct >= 50 and team_volume >= 1000000 else "Platinum" if direct >= 25 and team_volume >= 500000 else "Gold" if direct >= 10 and team_volume >= 100000 else "Silver" if direct >= 5 and team_volume >= 25000 else "Bronze"
+        rows.append({"telegram_id": u.telegram_id, "username": u.username or "Member", "rank": rank, "team_volume_zrl": str(team_volume), "direct_referrals": direct})
+    return {"leaderboard": rows}
+
+@app.post("/api/farming/claim")
+def claim_farming(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    now = datetime.now(timezone.utc)
+    local_now = now.astimezone(WARSAW)
+    if (local_now.hour, local_now.minute) < (20, 0):
+        raise HTTPException(403, "Daily Farming claim opens at 20:00 Europe/Warsaw")
+    claim_date = local_now.date().isoformat()
+    if db.scalar(select(DailyMiningClaim).where(DailyMiningClaim.telegram_id == user.telegram_id, DailyMiningClaim.claim_date == claim_date)):
+        raise HTTPException(409, "Today's Farming rewards have already been claimed")
+    positions = db.scalars(select(FarmingPosition).where(FarmingPosition.telegram_id == user.telegram_id, FarmingPosition.status == "active").with_for_update()).all()
+    amount = sum((farming_reward_due(p, now) for p in positions), Decimal("0"))
+    if amount <= 0:
+        raise HTTPException(400, "No Farming rewards available")
+    for p in positions:
+        due = farming_reward_due(p, now)
+        p.claimed_reward_zrl = Decimal(str(p.claimed_reward_zrl)) + due
+        if (p.ends_at.replace(tzinfo=timezone.utc) if p.ends_at.tzinfo is None else p.ends_at) <= now:
+            p.status = "completed"
+            user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + Decimal(str(p.principal_zrl))
+    key = f"farming-claim:{user.telegram_id}:{claim_date}"
+    user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + amount
+    db.add(DailyMiningClaim(telegram_id=user.telegram_id, claim_date=claim_date, amount_zrl=amount, idempotency_key=key))
+    db.add(RewardLedger(telegram_id=user.telegram_id, amount_zrl=amount, kind="farming_claim_internal", idempotency_key=key))
+    # Partner rewards are tracked in a separate commission ledger and are not minted into the Mining pool.
+    db.commit()
+    return {"ok": True, "claimed_zrl": str(amount), "on_chain_transfer": False, "claim_date": claim_date}
