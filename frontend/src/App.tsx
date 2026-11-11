@@ -52,6 +52,8 @@ export default function App() {
   const [depositIntent, setDepositIntent] = useState<{treasury_address:string;token_mint:string;memo_required:boolean;sender_wallet:string} | null>(null);
   const [farmPositions, setFarmPositions] = useState<any[]>([]);
   const [farmAmount, setFarmAmount] = useState("");
+  const [farmDuration, setFarmDuration] = useState(12);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [farmMessage, setFarmMessage] = useState("");
   const [farmBusy, setFarmBusy] = useState(false);
   const [referralData, setReferralData] = useState<any>(null);
@@ -162,9 +164,9 @@ export default function App() {
   async function createFarm() {
     setFarmBusy(true); setFarmMessage(""); setError("");
     try {
-      const response = await fetch(API + "/api/farming/positions", { method:"POST", headers:{...authHeaders(),"Content-Type":"application/json"}, body:JSON.stringify({amount_zrl:farmAmount}) });
+      const response = await fetch(API + "/api/farming/positions", { method:"POST", headers:{...authHeaders(),"Content-Type":"application/json"}, body:JSON.stringify({amount_zrl:farmAmount,duration_months:farmDuration}) });
       const data = await response.json(); if (!response.ok) throw Error(data.detail || "Не удалось открыть Farming.");
-      setFarmMessage("Farming открыт. Сумма заблокирована на 12 месяцев.");
+      setFarmMessage("Farming открыт на " + farmDuration + " мес. Сумма заблокирована до даты окончания пакета.");
       setFarmAmount(""); await Promise.all([loadFarming(), load()]);
     } catch(e) { setError(e instanceof Error ? e.message : "Ошибка открытия Farming"); }
     finally { setFarmBusy(false); }
@@ -243,6 +245,15 @@ export default function App() {
   }
 
   useEffect(() => {
+    const viewport = window.visualViewport;
+    const updateKeyboard = () => setKeyboardOpen(!!viewport && window.innerHeight - viewport.height > 140);
+    viewport?.addEventListener("resize", updateKeyboard);
+    viewport?.addEventListener("scroll", updateKeyboard);
+    updateKeyboard();
+    return () => { viewport?.removeEventListener("resize", updateKeyboard); viewport?.removeEventListener("scroll", updateKeyboard); };
+  }, []);
+
+  useEffect(() => {
     window.Telegram?.WebApp?.ready();
     window.Telegram?.WebApp?.expand();
     load();
@@ -306,20 +317,7 @@ export default function App() {
       </section>}
 
 
-      {tab === "farming" && <section className="content-card">
-        <span className="eyebrow">12 MONTH ZRL FARMING</span><h2>Farming</h2>
-        <div className="info-note">Total scheduled reward: 155% over 12 months. Monthly rewards decrease step by step. Principal is locked for 12 months. Daily claim opens after 20:00 Warsaw time. All credits are internal; on-chain payouts are disabled.</div>
-        <label>Amount to lock (ZRL)</label>
-        <input className="deposit-input" inputMode="decimal" value={farmAmount} onChange={e=>setFarmAmount(e.target.value)} placeholder="Enter ZRL amount" />
-        <button className="wallet-connect-btn" onClick={createFarm} disabled={farmBusy || !farmAmount}>{farmBusy ? "Processing…" : "Start 12-month Farming"}</button>
-        <button className="wallet-connect-btn" onClick={claimFarm} disabled={farmBusy}>{farmBusy ? "Processing…" : "Claim daily rewards (20:00)"}</button>\n        <button className="wallet-connect-btn" onClick={releaseFarm} disabled={farmBusy}>{farmBusy ? "Processing…" : "Release matured principal"}</button>
-        {farmMessage && <div className="wallet-success" role="status">{farmMessage}</div>}
-        <h3>Your Farming positions</h3>
-        {sectionBusy && <div className="loading-line">Loading positions…</div>}
-        {!sectionBusy && farmPositions.length===0 && <div className="empty-state">No active Farming positions.</div>}
-        {farmPositions.map(p=><article className="reward-item" key={p.id}><div><b>{fmt(p.principal_zrl)} ZRL locked</b><small>Ends: {dateLabel(p.ends_at)}</small><small>Claimed: {fmt(p.claimed_reward_zrl)} ZRL</small></div><strong>{fmt(p.pending_reward_zrl)} ZRL pending</strong></article>)}
-      </section>}
-      {tab === "community" && <section className="content-card">
+      {tab === "farming" && <section className="content-card farming-card">\n        <span className="eyebrow">ZRL FIXED-TERM FARMING</span><h2>Choose your Farming package</h2>\n        <div className="info-note">Choose a lock period. Rewards follow a decreasing monthly schedule; the 12-month package totals 155% over the full term. Shorter packages receive the sum of their scheduled months. Daily Claim opens after 20:00 Warsaw time. All balances are internal; Solana payouts are disabled.</div>\n        <div className="farm-packages" role="group" aria-label="Farming duration">\n          {[1,3,6,9,12].map(months => <button type="button" key={months} className={farmDuration===months ? "farm-package selected" : "farm-package"} onClick={()=>setFarmDuration(months)}><b>{months}</b><small>month{months>1?"s":""}</small><strong>{(155*[12,11,10,9,8,7,6,5,4,3,2,1].slice(0,months).reduce((x,y)=>x+y,0)/78).toFixed(2)}%</strong><em>scheduled</em></button>)}\n        </div>\n        <label htmlFor="farm-amount">Amount to lock (ZRL)</label>\n        <input id="farm-amount" className="deposit-input" inputMode="decimal" type="number" min="0" step="any" value={farmAmount} onChange={e=>setFarmAmount(e.target.value)} placeholder="Enter ZRL amount" />\n        <div className="farm-calculator"><div><span>Selected package</span><b>{farmDuration} months</b></div><div><span>Principal</span><b>{farmAmount && Number(farmAmount)>0 ? fmt(farmAmount)+" ZRL" : "—"}</b></div><div><span>Estimated total reward</span><b className="farm-estimate">{farmAmount && Number(farmAmount)>0 ? fmt(Number(farmAmount)*155*[12,11,10,9,8,7,6,5,4,3,2,1].slice(0,farmDuration).reduce((x,y)=>x+y,0)/7800)+" ZRL" : "—"}</b></div><div><span>Principal + scheduled reward</span><b>{farmAmount && Number(farmAmount)>0 ? fmt(Number(farmAmount)*(1+155*[12,11,10,9,8,7,6,5,4,3,2,1].slice(0,farmDuration).reduce((x,y)=>x+y,0)/7800))+" ZRL" : "—"}</b></div></div>\n        <div className="farm-schedule"><b>Monthly reward schedule</b>{[12,11,10,9,8,7,6,5,4,3,2,1].slice(0,farmDuration).map((weight,index)=><div className="farm-month" key={index}><span>Month {index+1}</span><span>{(155*weight/78).toFixed(2)}% of principal</span><b>{farmAmount && Number(farmAmount)>0 ? fmt(Number(farmAmount)*155*weight/7800)+" ZRL" : "—"}</b></div>)}</div>\n        <button className="wallet-connect-btn" onClick={createFarm} disabled={farmBusy || !farmAmount || Number(farmAmount)<=0 || Number(farmAmount)>Number(me?.balance_zrl||0)}>{farmBusy ? "Processing…" : "Start " + farmDuration + "-month Farming"}</button>\n        <button className="wallet-connect-btn secondary-action" onClick={claimFarm} disabled={farmBusy}>{farmBusy ? "Processing…" : "Claim daily rewards · after 20:00"}</button>\n        <button className="wallet-connect-btn secondary-action" onClick={releaseFarm} disabled={farmBusy}>{farmBusy ? "Processing…" : "Release matured principal"}</button>\n        {farmMessage && <div className="wallet-success" role="status">{farmMessage}</div>}\n        <h3>Your Farming positions</h3>{sectionBusy && <div className="loading-line">Loading positions…</div>}{!sectionBusy && farmPositions.length===0 && <div className="empty-state">No active Farming positions.</div>}{farmPositions.map(p=><article className="reward-item" key={p.id}><div><b>{fmt(p.principal_zrl)} ZRL locked</b><small>Ends: {dateLabel(p.ends_at)}</small><small>Claimed: {fmt(p.claimed_reward_zrl)} ZRL</small></div><strong>{fmt(p.pending_reward_zrl)} ZRL pending</strong></article>)}\n      </section>}\n      {tab === "community" && <section className="content-card">
         <span className="eyebrow">ZER0LIFE PARTNER PROGRAM</span><h2>Community & ranks</h2>
         {sectionBusy && <div className="loading-line">Loading community…</div>}
         {referralData && <>
@@ -399,7 +397,7 @@ export default function App() {
 
       <footer>ZER0LIFE LABS <span>·</span> SOLANA <span>·</span> ZRL ECOSYSTEM</footer>
 
-      <nav className="bottom-nav" aria-label="Main navigation">
+      <nav className={keyboardOpen ? "bottom-nav keyboard-hidden" : "bottom-nav"} aria-label="Main navigation">
         {tabs.map((item) => <button key={item.id} className={tab === item.id ? "nav-item active" : "nav-item"} onClick={() => setTab(item.id)}>
           <span className="nav-icon">{item.icon}</span><small>{item.label}</small>
         </button>)}
