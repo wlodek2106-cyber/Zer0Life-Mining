@@ -42,6 +42,9 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("home");
   const [walletBusy, setWalletBusy] = useState(false);
   const [walletMessage, setWalletMessage] = useState("");
+  const [depositSignature, setDepositSignature] = useState("");
+  const [depositBusy, setDepositBusy] = useState(false);
+  const [depositMessage, setDepositMessage] = useState("");
 
   function authHeaders() {
     const initData = window.Telegram?.WebApp?.initData || "";
@@ -96,6 +99,32 @@ export default function App() {
       setError(e instanceof Error ? e.message : "Ошибка загрузки истории");
     } finally {
       setSectionBusy(false);
+    }
+  }
+
+  async function verifyDeposit() {
+    const signature = depositSignature.trim();
+    if (!signature) { setError("Вставь Transaction Signature из Solana."); return; }
+    setDepositBusy(true);
+    setDepositMessage("");
+    setError("");
+    try {
+      const response = await fetch(API + "/api/deposits/verify", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ signature }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw Error(data.detail || "Не удалось проверить пополнение.");
+      setDepositMessage(data.already_credited
+        ? "Эта транзакция уже была зачислена."
+        : "Пополнение подтверждено: +" + data.amount_zrl + " ZRL");
+      setDepositSignature("");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка проверки пополнения");
+    } finally {
+      setDepositBusy(false);
     }
   }
 
@@ -235,6 +264,16 @@ export default function App() {
         <button className="wallet-connect-btn" onClick={connectPhantom} disabled={walletBusy}>{walletBusy ? "Connecting…" : me?.wallet_address ? "Verify / change Phantom wallet" : "Connect Phantom wallet"}</button>
         {walletMessage && <div className="wallet-success" role="status">{walletMessage}</div>}
         <div className="info-note">Phantom signs a one-time verification message. No transaction is sent and no private key or recovery phrase is requested. Wallet linking is not a token withdrawal.</div>
+        <div className="deposit-panel">
+          <span className="eyebrow">ADD ZRL TO YOUR ACCOUNT</span>
+          <h3>Verify Solana deposit</h3>
+          <p>1. Send ZRL from your verified wallet to the Treasury address. 2. Copy the transaction signature from Solscan or your wallet. 3. Paste it below. The API credits only finalized transfers of the configured ZRL mint.</p>
+          <input className="deposit-input" value={depositSignature} onChange={(event) => setDepositSignature(event.target.value)} placeholder="Solana transaction signature" autoComplete="off" />
+          <button className="wallet-connect-btn" onClick={verifyDeposit} disabled={depositBusy || !me?.wallet_address}>{depositBusy ? "Checking on Solana…" : "Verify deposit"}</button>
+          {!me?.wallet_address && <small>First connect and verify the wallet you will send from.</small>}
+          {depositMessage && <div className="wallet-success" role="status">{depositMessage}</div>}
+          <a className="deposit-address" href={"https://solscan.io/account/4GEVDNM4VEtdRpwLcybsX2R4yhYL2vcYoNhoFsxY49Ex"} target="_blank" rel="noreferrer">View Treasury address on Solscan ↗</a>
+        </div>
         <div className="detail-row"><span>On-chain payouts</span><b>{status?.on_chain_payouts_enabled ? "Enabled in API" : "Disabled"}</b></div>
       </section>}
 
