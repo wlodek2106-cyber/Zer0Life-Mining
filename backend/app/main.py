@@ -206,10 +206,8 @@ def wallet_verify(payload: dict, user: User = Depends(current_user), db: Session
 def deposit_details(user: User = Depends(current_user)):
     if not settings.treasury_wallet_address.strip():
         raise HTTPException(503, "Treasury wallet is not configured")
-    if not user.wallet_address:
-        raise HTTPException(400, "Connect and verify your Phantom wallet before depositing")
     return {"treasury_address": settings.treasury_wallet_address, "token_mint": settings.zrl_token_mint,
-            "network": "Solana", "memo_required": False, "sender_wallet": user.wallet_address}
+            "network": "Solana", "memo_required": False, "automatic_credit": False}
 
 
 @app.post("/api/deposits/verify")
