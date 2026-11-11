@@ -285,24 +285,27 @@ async def verify_deposit(payload: dict, user: User = Depends(current_user), db: 
     if amount <= 0:
         raise HTTPException(400, "Deposit amount must be positive")
 
-    # Memo-free deposits: require a real outgoing ZRL balance delta from the
-    # user's previously verified Phantom wallet in this same transaction.
-    source_wallet = user.wallet_address
-    if not source_wallet:
-        raise HTTPException(400, "Connect and verify your Phantom wallet before depositing")
+    # Memo-free shared-Treasury flow: identify the on-chain source from token
+    # balance deltas. The authenticated Telegram account submitting this
+    # signature receives the internal credit; signature uniqueness prevents reuse.
     owner_pre = {}
     owner_post = {}
     for item in pre:
-        if item.get("mint") == mint and item.get("owner"):
+        if item.get("mint") == mint and item.get("owner") and item.get("owner") != treasury:
             owner_pre[item["owner"]] = owner_pre.get(item["owner"], 0) + int(item.get("uiTokenAmount", {}).get("amount", "0"))
     for item in post:
-        if item.get("mint") == mint and item.get("owner"):
+        if item.get("mint") == mint and item.get("owner") and item.get("owner") != treasury:
             owner_post[item["owner"]] = owner_post.get(item["owner"], 0) + int(item.get("uiTokenAmount", {}).get("amount", "0"))
-    source_delta = owner_post.get(source_wallet, 0) - owner_pre.get(source_wallet, 0)
-    if source_delta >= 0:
-        raise HTTPException(400, "No outgoing ZRL transfer from your verified Phantom wallet was found")
+    source_candidates = [
+        (owner_post.get(owner, 0) - owner_pre.get(owner, 0), owner)
+        for owner in set(owner_pre) | set(owner_post)
+        if owner_post.get(owner, 0) - owner_pre.get(owner, 0) < 0
+    ]
+    if not source_candidates:
+        raise HTTPException(400, "No outgoing ZRL token balance was found in this transaction")
+    source_delta, source_wallet = min(source_candidates)
     if -source_delta < delta_raw:
-        raise HTTPException(400, "The verified wallet's outgoing ZRL amount does not match the Treasury deposit")
+        raise HTTPException(400, "Outgoing ZRL amount does not cover the Treasury deposit")
 
     ledger_key = "deposit:" + signature
     try:
