@@ -22,6 +22,10 @@ services:
           property: connectionString
       - key: BOT_TOKEN
         sync: false
+      - key: HELIUS_API_KEY
+        sync: false
+      - key: SOLANA_RPC_URL
+        value: ""
       - key: FRONTEND_ORIGIN
         value: https://zer0life-mining.onrender.com
       - key: ZRL_TOKEN_MINT
