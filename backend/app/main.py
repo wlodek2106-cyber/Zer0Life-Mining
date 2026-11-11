@@ -9,6 +9,7 @@ import httpx
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
 from .db import Base, engine, get_db
@@ -464,9 +465,15 @@ def create_farming_position(payload: dict, user: User = Depends(current_user), d
     duration_months = int(payload.get("duration_months", 12))
     if duration_months not in {1, 3, 6, 9, 12}:
         raise HTTPException(400, "Choose a Farming package: 1, 3, 6, 9 or 12 months")
-    if amount <= 0 or amount > Decimal(str(user.internal_balance_zrl)):
+    # Serialize balance-changing actions for this user to prevent concurrent
+    # opens from spending the same internal balance twice.
+    locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
+    if locked_user is None:
+        raise HTTPException(401, "User account not found")
+    if amount <= 0 or amount > Decimal(str(locked_user.internal_balance_zrl)):
         raise HTTPException(400, "Invalid amount or insufficient available balance")
     now = datetime.now(timezone.utc)
+    user = locked_user
     user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) - amount
     position = FarmingPosition(telegram_id=user.telegram_id, principal_zrl=amount, claimed_reward_zrl=0,
         started_at=now, ends_at=now + timedelta(days=365 * duration_months / 12), status="active")
@@ -547,6 +554,12 @@ def leaderboard(user: User = Depends(current_user), db: Session = Depends(get_db
 @app.post("/api/farming/claim")
 def claim_farming(user: User = Depends(current_user), db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
+    # Serialize all daily claims for one account; the unique idempotency key
+    # remains the final database-level guard against duplicate submissions.
+    locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
+    if locked_user is None:
+        raise HTTPException(401, "User account not found")
+    user = locked_user
     local_now = now.astimezone(WARSAW)
     if (local_now.hour, local_now.minute) < (20, 0):
         raise HTTPException(403, "Daily Farming claim opens at 20:00 Europe/Warsaw")
@@ -593,7 +606,11 @@ def claim_farming(user: User = Depends(current_user), db: Session = Depends(get_
                 source_claim_key=key
             ))
         referrer_id = beneficiary_id
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Today's Farming rewards have already been claimed")
     return {"ok": True, "claimed_zrl": str(amount), "partner_commissions_recorded": True,
             "partner_commissions_pending": True, "on_chain_transfer": False, "claim_date": claim_date}
 
