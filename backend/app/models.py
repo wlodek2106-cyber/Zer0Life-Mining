@@ -104,3 +104,13 @@ class DepositTransaction(Base):
     token_mint: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(24), default="credited")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DepositIntent(Base):
+    __tablename__ = "deposit_intents"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(ForeignKey("users.telegram_id"), index=True)
+    memo_code: Mapped[str] = mapped_column(String(96), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
