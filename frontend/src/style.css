@@ -34,3 +34,21 @@
 .deposit-details{display:flex;flex-direction:column;gap:9px;padding:13px;border:1px solid rgba(120,220,150,.22);border-radius:12px;background:rgba(0,0,0,.14);overflow-wrap:anywhere}
 .deposit-details code{display:block;padding:10px;border-radius:8px;background:rgba(0,0,0,.25);color:#b4f38d;font-size:11px;overflow-wrap:anywhere;user-select:all}
 .deposit-details small{color:#aab9ad;font-size:11px}
+
+/* Mobile layout: reserve room for fixed navigation and hide it while iOS keyboard is open. */
+.app-shell{padding-bottom:calc(178px + env(safe-area-inset-bottom));overflow:visible}
+.bottom-nav{grid-template-columns:repeat(4,minmax(0,1fr));row-gap:4px;padding:9px 8px calc(9px + env(safe-area-inset-bottom))}
+.nav-item{min-height:48px}.bottom-nav.keyboard-hidden{display:none}
+.farming-card{padding:20px 17px}
+.farm-packages{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:17px 0 20px}
+.farm-package{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:90px;padding:9px 5px;border:1px solid var(--line);border-radius:13px;background:#0b170f;color:#e7f3e9}
+.farm-package b{font:700 22px 'Space Grotesk'}.farm-package small,.farm-package em{font-size:8px;color:#91a698;font-style:normal}.farm-package strong{font:700 12px 'Space Grotesk';color:var(--green);margin-top:4px}
+.farm-package.selected{border-color:#a3ff42;background:linear-gradient(145deg,#1a3921,#102017);box-shadow:0 0 0 1px #a3ff4230}
+.farming-card label{display:block;margin:10px 0 8px;color:#dce9de;font-size:12px}
+.farm-calculator{display:flex;flex-direction:column;gap:0;margin-top:14px;padding:13px;border:1px solid var(--line);border-radius:13px;background:#0a160e}
+.farm-calculator>div{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid #ffffff10;font-size:10px}.farm-calculator>div:last-child{border-bottom:0}
+.farm-calculator span{color:#91a698}.farm-calculator b{text-align:right;color:#e7f3e9}.farm-calculator .farm-estimate{color:var(--green)}
+.farm-schedule{margin-top:17px;padding:13px;border:1px solid var(--line);border-radius:13px}.farm-schedule>b{display:block;font-size:11px;margin-bottom:8px}
+.farm-month{display:grid;grid-template-columns:1fr 1.15fr auto;gap:6px;align-items:center;padding:8px 0;border-top:1px solid #ffffff10;font-size:9px}.farm-month span{color:#91a698}.farm-month b{color:var(--green);text-align:right;white-space:nowrap}
+.secondary-action{background:#12241a;color:var(--green);border-color:#426b37}
+@media(max-width:380px){.farm-packages{grid-template-columns:repeat(2,minmax(0,1fr))}.farm-month{grid-template-columns:.8fr 1fr auto;font-size:8px}}
