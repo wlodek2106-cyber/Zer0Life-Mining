@@ -275,14 +275,16 @@ export default function App() {
         <div className="deposit-panel">
           <span className="eyebrow">ADD ZRL TO YOUR ACCOUNT</span>
           <h3>Generate deposit details</h3>
-          <p>Verify your Phantom wallet once, then send ZRL from that same wallet to the Treasury address. No memo or extra transaction instruction is needed.</p>
-          <div className="info-note">Phantom connection has been removed from this screen. Automatic deposits to the shared Treasury are paused until individual deposit addresses are available, so deposits can be credited to the correct Telegram account without a memo or wallet connection.</div>
+          <p>Show the shared Treasury address, send only ZRL on Solana, then submit the transaction signature for Helius verification.</p>
+          <button className="wallet-connect-btn" onClick={createDepositIntent} disabled={depositBusy}>{depositBusy ? "Loading…" : "Show deposit address"}</button>
+          {depositIntent && <div className="deposit-details"><b>Shared Treasury address</b><code>{depositIntent.treasury_address}</code><button className="wallet-connect-btn" onClick={() => navigator.clipboard?.writeText(depositIntent.treasury_address)}>Copy Treasury address</button><small>ZRL only · Solana · No memo</small></div>}
+          <div className="info-note">Helius can verify that a finalized ZRL transfer reached Treasury. Account crediting still requires a safe way to identify which Telegram user made the transfer.</div>
           <input className="deposit-input" value={depositSignature} onChange={(event) => setDepositSignature(event.target.value)} placeholder="Solana transaction signature" autoComplete="off" />
           <button className="wallet-connect-btn" onClick={verifyDeposit} disabled={depositBusy || !depositIntent}>{depositBusy ? "Checking on Solana…" : "Verify deposit"}</button>
           {depositMessage && <div className="wallet-success" role="status">{depositMessage}</div>}
           <a className="deposit-address" href="https://solscan.io/account/4GEVDNM4VEtdRpwLcybsX2R4yhYL2vcYoNhoFsxY49Ex" target="_blank" rel="noreferrer">View Treasury on Solscan ↗</a>
         </div>
-        <div className="info-note">Only finalized incoming transfers of the configured ZRL token from your verified Phantom wallet are eligible. No memo is required. Never send SOL or other tokens to this deposit flow.</div>
+        <div className="info-note">Only send the configured ZRL token on Solana. Helius transaction verification does not by itself identify the Telegram account entitled to the deposit. Never send SOL or other tokens to this deposit flow.</div>
         <div className="detail-row"><span>On-chain payouts</span><b>Disabled until separately audited</b></div>
       </section>}
 
