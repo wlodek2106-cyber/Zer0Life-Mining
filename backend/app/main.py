@@ -683,45 +683,47 @@ def claim_farming(user: User = Depends(current_user), db: Session = Depends(get_
     if db.scalar(select(DailyMiningClaim).where(DailyMiningClaim.telegram_id == user.telegram_id, DailyMiningClaim.claim_date == claim_date)):
         raise HTTPException(409, "Today's Farming rewards have already been claimed")
     positions = db.scalars(select(FarmingPosition).where(FarmingPosition.telegram_id == user.telegram_id, FarmingPosition.status == "active").with_for_update()).all()
-    amount = sum((farming_reward_due(p, now) for p in positions), Decimal("0"))
-    if amount <= 0:
+    requested_amount = sum((farming_reward_due(p, now) for p in positions), Decimal("0"))
+    if requested_amount <= 0:
         raise HTTPException(400, "No Farming rewards available")
+    pool_state = lock_reward_pool(db)
+    referrers = []
+    referrer_id = user.telegram_id
+    for level in range(1, 4):
+        edge = db.get(ReferralEdge, referrer_id)
+        if edge is None:
+            break
+        referrers.append((level, edge.referrer_telegram_id))
+        referrer_id = edge.referrer_telegram_id
+    commission_rate = sum((PARTNER_RATES[level] for level, _ in referrers), Decimal("0"))
+    pool_remaining = max(Decimal("0"), Decimal(str(settings.mining_rewards_allocation_zrl)) - reward_pool_usage(db))
+    amount = min(requested_amount, pool_remaining / (Decimal("1") + commission_rate))
+    if amount <= 0:
+        raise HTTPException(409, "The shared 70m ZRL rewards pool has been exhausted")
     matured_principal = Decimal("0")
+    amount_left = amount
     for p in positions:
         due = farming_reward_due(p, now)
-        p.claimed_reward_zrl = Decimal(str(p.claimed_reward_zrl)) + due
+        paid = min(due, amount_left)
+        if paid > 0:
+            p.claimed_reward_zrl = Decimal(str(p.claimed_reward_zrl)) + paid
+            amount_left -= paid
         if (p.ends_at.replace(tzinfo=timezone.utc) if p.ends_at.tzinfo is None else p.ends_at) <= now:
             p.status = "completed"
             principal = Decimal(str(p.principal_zrl))
             matured_principal += principal
-            db.add(RewardLedger(
-                telegram_id=user.telegram_id,
-                amount_zrl=principal,
-                kind="farming_principal_return",
-                idempotency_key=f"farming-release:{p.id}"
-            ))
+            db.add(RewardLedger(telegram_id=user.telegram_id, amount_zrl=principal, kind="farming_principal_return", idempotency_key=f"farming-release:{p.id}"))
     if matured_principal:
         user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + matured_principal
     key = f"farming-claim:{user.telegram_id}:{claim_date}"
     user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + amount
     db.add(DailyMiningClaim(telegram_id=user.telegram_id, claim_date=claim_date, amount_zrl=amount, idempotency_key=key))
     db.add(RewardLedger(telegram_id=user.telegram_id, amount_zrl=amount, kind="farming_claim_internal", idempotency_key=key))
-    referrer_id = user.telegram_id
-    for level in range(1, 4):
-        edge = db.get(ReferralEdge, referrer_id)
-        if edge is None:
-            break
-        beneficiary_id = edge.referrer_telegram_id
+    for level, beneficiary_id in referrers:
         commission_amount = (amount * PARTNER_RATES[level]).quantize(Decimal("0.000000001"))
         if commission_amount > 0:
-            db.add(PartnerCommission(
-                beneficiary_telegram_id=beneficiary_id,
-                source_telegram_id=user.telegram_id,
-                level=level,
-                amount_zrl=commission_amount,
-                source_claim_key=key
-            ))
-        referrer_id = beneficiary_id
+            db.add(PartnerCommission(beneficiary_telegram_id=beneficiary_id, source_telegram_id=user.telegram_id,
+                level=level, amount_zrl=commission_amount, source_claim_key=key))
     try:
         db.commit()
     except IntegrityError:
@@ -746,12 +748,15 @@ def release_matured_farming(user: User = Depends(current_user), db: Session = De
     released = Decimal("0")
     maturity_rewards = Decimal("0")
     released_ids = []
+    pool_state = lock_reward_pool(db)
+    pool_remaining = max(Decimal("0"), Decimal(str(settings.mining_rewards_allocation_zrl)) - reward_pool_usage(db))
     for position in positions:
         end = position.ends_at.replace(tzinfo=timezone.utc) if position.ends_at.tzinfo is None else position.ends_at
         if end > now:
             continue
         principal = Decimal(str(position.principal_zrl))
-        final_reward = farming_reward_due(position, now)
+        final_reward = min(farming_reward_due(position, now), pool_remaining)
+        pool_remaining -= final_reward
         position.claimed_reward_zrl = Decimal(str(position.claimed_reward_zrl)) + final_reward
         position.status = "completed"
         released += principal
@@ -779,13 +784,9 @@ def release_matured_farming(user: User = Depends(current_user), db: Session = De
                 beneficiary_id = edge.referrer_telegram_id
                 commission_amount = (final_reward * PARTNER_RATES[level]).quantize(Decimal("0.000000001"))
                 if commission_amount > 0:
-                    db.add(PartnerCommission(
-                        beneficiary_telegram_id=beneficiary_id,
-                        source_telegram_id=user.telegram_id,
-                        level=level,
-                        amount_zrl=commission_amount,
-                        source_claim_key=maturity_key
-                    ))
+                    db.add(PartnerCommission(beneficiary_telegram_id=beneficiary_id,
+                        source_telegram_id=user.telegram_id, level=level,
+                        amount_zrl=commission_amount, source_claim_key=maturity_key))
                 referrer_id = beneficiary_id
     if not released_ids:
         raise HTTPException(400, "No matured Farming principal is available to release")
