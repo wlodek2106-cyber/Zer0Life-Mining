@@ -242,7 +242,7 @@ async def verify_deposit(payload: dict, user: User = Depends(current_user), db: 
     }
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(settings.solana_rpc_url, json=payload_rpc)
+            response = await client.post(settings.rpc_url, json=payload_rpc)
             response.raise_for_status()
             result = response.json()
     except Exception:
@@ -397,7 +397,7 @@ async def treasury_status(admin: User = Depends(admin_user)):
     }
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.post(settings.solana_rpc_url, json=payload)
+            response = await client.post(settings.rpc_url, json=payload)
             response.raise_for_status()
             data = response.json()
         if data.get("error"):
