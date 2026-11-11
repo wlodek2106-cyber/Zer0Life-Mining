@@ -550,12 +550,22 @@ def claim_farming(user: User = Depends(current_user), db: Session = Depends(get_
     amount = sum((farming_reward_due(p, now) for p in positions), Decimal("0"))
     if amount <= 0:
         raise HTTPException(400, "No Farming rewards available")
+    matured_principal = Decimal("0")
     for p in positions:
         due = farming_reward_due(p, now)
         p.claimed_reward_zrl = Decimal(str(p.claimed_reward_zrl)) + due
         if (p.ends_at.replace(tzinfo=timezone.utc) if p.ends_at.tzinfo is None else p.ends_at) <= now:
             p.status = "completed"
-            user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + Decimal(str(p.principal_zrl))
+            principal = Decimal(str(p.principal_zrl))
+            matured_principal += principal
+            db.add(RewardLedger(
+                telegram_id=user.telegram_id,
+                amount_zrl=principal,
+                kind="farming_principal_return",
+                idempotency_key=f"farming-release:{p.id}"
+            ))
+    if matured_principal:
+        user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + matured_principal
     key = f"farming-claim:{user.telegram_id}:{claim_date}"
     user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) + amount
     db.add(DailyMiningClaim(telegram_id=user.telegram_id, claim_date=claim_date, amount_zrl=amount, idempotency_key=key))
