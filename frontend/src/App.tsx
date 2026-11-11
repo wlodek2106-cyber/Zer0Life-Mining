@@ -6,7 +6,7 @@ type Me = { balance_zrl: string; wallet_address?: string | null; username?: stri
 type Equipment = { id: number; code: string; name: string; price_zrl: string; hashrate: string; reward_per_day: string };
 type Reward = { amount_zrl: string; kind: string; created_at: string };
 type Period = "day" | "week" | "month";
-type Tab = "home" | "mining" | "farming" | "community" | "upgrade" | "rewards" | "wallet" | "profile";
+type Tab = "home" | "mining" | "farming" | "community" | "upgrade" | "rewards" | "wallet" | "profile" | "admin";
 
 const tabs: { id: Tab; label: string; icon: string }[] = [
   { id: "home", label: "Home", icon: "⌂" },
@@ -17,6 +17,7 @@ const tabs: { id: Tab; label: string; icon: string }[] = [
   { id: "rewards", label: "Rewards", icon: "◇" },
   { id: "wallet", label: "Wallet", icon: "▣" },
   { id: "profile", label: "Profile", icon: "◎" },
+  { id: "admin", label: "Admin", icon: "⚙" },
 ];
 
 function fmt(value: string | number | undefined) {
@@ -57,7 +58,7 @@ export default function App() {
   const [farmMessage, setFarmMessage] = useState("");
   const [farmBusy, setFarmBusy] = useState(false);
   const [referralData, setReferralData] = useState<any>(null);
-  const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);\n  const [adminAvailable, setAdminAvailable] = useState(false);\n  const [adminData, setAdminData] = useState<any>(null);
 
   function authHeaders() {
     const initData = window.Telegram?.WebApp?.initData || "";
@@ -191,6 +192,16 @@ export default function App() {
     } catch(e) { setError(e instanceof Error ? e.message : "Ошибка Claim"); }
     finally { setFarmBusy(false); }
   }
+  async function loadAdmin() {
+    try {
+      const response = await fetch(API + "/api/admin/partner-dashboard", {headers:authHeaders()});
+      if (response.status === 403 || response.status === 401) { setAdminAvailable(false); return; }
+      if (!response.ok) throw Error("Admin dashboard unavailable");
+      setAdminData(await response.json());
+      setAdminAvailable(true);
+    } catch { setAdminAvailable(false); }
+  }
+
   async function loadCommunity() {
     setSectionBusy(true); setError("");
     try {
@@ -264,7 +275,7 @@ export default function App() {
     if (tab === "upgrade") loadEquipment();
     if (tab === "rewards") loadRewards(period);
     if (tab === "farming") loadFarming();
-    if (tab === "community") loadCommunity();
+    if (tab === "community") loadCommunity();\n    if (tab === "admin") loadAdmin();
   }, [tab, period]);
 
   const title = tabs.find((item) => item.id === tab)?.label || "Home";
@@ -391,6 +402,18 @@ export default function App() {
         <div className="detail-row"><span>On-chain payouts</span><b>Disabled until separately audited</b></div>
       </section>}
 
+      {tab === "admin" && adminAvailable && <section className="content-card">
+        <span className="eyebrow">RESTRICTED ACCESS</span><h2>Partner programme admin</h2>
+        <div className="info-note">Read-only overview. Pending commission amounts are internal ledger records. Payouts are disabled.</div>
+        <div className="detail-row"><span>Total pending commissions</span><b>{fmt(adminData?.total_pending_zrl)} ZRL</b></div>
+        <div className="detail-row"><span>Commission entries</span><b>{fmt(adminData?.commission_entries)}</b></div>
+        <div className="detail-row"><span>Unique partners</span><b>{fmt(adminData?.unique_partners)}</b></div>
+        <h3>By referral level</h3>
+        {adminData?.by_level?.map((x:any)=><article className="reward-item" key={x.level}><div><b>Level {x.level} · {x.rate}</b><small>{x.entries} entries</small></div><strong>{fmt(x.pending_zrl)} ZRL</strong></article>)}
+        <h3>Latest commission entries</h3>
+        {adminData?.recent?.map((x:any,i:number)=><article className="reward-item" key={x.level+"-"+x.source_telegram_id+"-"+x.created_at+"-"+i}><div><b>Level {x.level} · user {x.beneficiary_telegram_id}</b><small>Source {x.source_telegram_id} · {dateLabel(x.created_at)}</small><small>Pending</small></div><strong>{fmt(x.amount_zrl)} ZRL</strong></article>)}
+        <button className="wallet-connect-btn secondary-action" onClick={loadAdmin}>Refresh admin data</button>
+      </section>}
       {tab === "profile" && <section className="content-card">
         <span className="eyebrow">YOUR ACCOUNT</span><h2>Profile</h2>
         <div className="profile-avatar">{(me?.username || "Z").slice(0, 1).toUpperCase()}</div>
@@ -403,7 +426,7 @@ export default function App() {
       <footer>ZER0LIFE LABS <span>·</span> SOLANA <span>·</span> ZRL ECOSYSTEM</footer>
 
       <nav className={keyboardOpen ? "bottom-nav keyboard-hidden" : "bottom-nav"} aria-label="Main navigation">
-        {tabs.map((item) => <button key={item.id} className={tab === item.id ? "nav-item active" : "nav-item"} onClick={() => setTab(item.id)}>
+        {tabs.filter(item => item.id !== "admin" || adminAvailable).map((item) => <button key={item.id} className={tab === item.id ? "nav-item active" : "nav-item"} onClick={() => setTab(item.id)}>
           <span className="nav-icon">{item.icon}</span><small>{item.label}</small>
         </button>)}
       </nav>
