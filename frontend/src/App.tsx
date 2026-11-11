@@ -3,6 +3,9 @@ import { useEffect, useState } from "react";
 const API = import.meta.env.VITE_API_URL || "";
 type Status = { hashrate: number; estimated_reward_per_day: number; active_miners: number; mode: string; real_mining: boolean; on_chain_payouts_enabled: boolean };
 type Me = { balance_zrl: string; wallet_address?: string | null; username?: string | null };
+type Equipment = { id: number; code: string; name: string; price_zrl: string; hashrate: string; reward_per_day: string };
+type Reward = { amount_zrl: string; kind: string; created_at: string };
+type Period = "day" | "week" | "month";
 type Tab = "home" | "mining" | "upgrade" | "rewards" | "wallet" | "profile";
 
 const tabs: { id: Tab; label: string; icon: string }[] = [
@@ -18,20 +21,36 @@ function fmt(value: string | number | undefined) {
   if (value === undefined || value === null || value === "") return "—";
   return typeof value === "number" ? value.toLocaleString("en-US", { maximumFractionDigits: 4 }) : value;
 }
+function dateLabel(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+function kindLabel(kind: string) {
+  const labels: Record<string, string> = { accrual: "Mining accrual", claim_internal: "Internal claim", admin_adjustment: "Account adjustment" };
+  return labels[kind] || kind.replaceAll("_", " ");
+}
 
 export default function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [me, setMe] = useState<Me | null>(null);
+  const [equipment, setEquipment] = useState<Equipment[]>([]);
+  const [rewards, setRewards] = useState<Reward[]>([]);
+  const [period, setPeriod] = useState<Period>("week");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(true);
+  const [sectionBusy, setSectionBusy] = useState(false);
   const [tab, setTab] = useState<Tab>("home");
+
+  function authHeaders() {
+    const initData = window.Telegram?.WebApp?.initData || "";
+    return { Authorization: "tma " + initData };
+  }
 
   async function load() {
     setBusy(true);
     setError("");
     try {
-      const initData = (window as any).Telegram?.WebApp?.initData || "";
-      const headers = { Authorization: "tma " + initData };
+      const headers = authHeaders();
       const [a, b] = await Promise.all([
         fetch(API + "/api/mining/status", { headers }),
         fetch(API + "/api/me", { headers }),
@@ -47,11 +66,47 @@ export default function App() {
     }
   }
 
+  async function loadEquipment() {
+    setSectionBusy(true);
+    setError("");
+    try {
+      const response = await fetch(API + "/api/equipment", { headers: authHeaders() });
+      if (response.status === 401) throw Error("Telegram-сессия истекла. Перезапусти Mini App.");
+      if (!response.ok) throw Error("Не удалось загрузить каталог оборудования.");
+      setEquipment(await response.json());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка загрузки оборудования");
+    } finally {
+      setSectionBusy(false);
+    }
+  }
+
+  async function loadRewards(selectedPeriod: Period) {
+    setSectionBusy(true);
+    setError("");
+    try {
+      const response = await fetch(API + "/api/mining/stats?period=" + selectedPeriod, { headers: authHeaders() });
+      if (response.status === 401) throw Error("Telegram-сессия истекла. Перезапусти Mini App.");
+      if (!response.ok) throw Error("Не удалось загрузить историю наград.");
+      const data = await response.json();
+      setRewards(Array.isArray(data.rewards) ? data.rewards : []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка загрузки истории");
+    } finally {
+      setSectionBusy(false);
+    }
+  }
+
   useEffect(() => {
     window.Telegram?.WebApp?.ready();
     window.Telegram?.WebApp?.expand();
     load();
   }, []);
+
+  useEffect(() => {
+    if (tab === "upgrade") loadEquipment();
+    if (tab === "rewards") loadRewards(period);
+  }, [tab, period]);
 
   const title = tabs.find((item) => item.id === tab)?.label || "Home";
 
@@ -65,7 +120,7 @@ export default function App() {
 
       <div className="page-heading">
         <div><span className="eyebrow">MINING ECOSYSTEM</span><h1>{tab === "home" ? <>Mine your<br /><em>digital future.</em></> : title}</h1></div>
-        <button className="refresh-btn" onClick={load} disabled={busy} aria-label="Refresh">↻</button>
+        <button className="refresh-btn" onClick={() => { load(); if (tab === "upgrade") loadEquipment(); if (tab === "rewards") loadRewards(period); }} disabled={busy || sectionBusy} aria-label="Refresh">↻</button>
       </div>
 
       {error && <div className="notice" role="alert">{error}</div>}
@@ -89,7 +144,7 @@ export default function App() {
         <section className="quick-actions">
           <button onClick={() => setTab("mining")}><span>⛏</span><b>Mining status</b><small>View performance</small></button>
           <button onClick={() => setTab("rewards")}><span>◇</span><b>My rewards</b><small>Balance & earnings</small></button>
-          <button onClick={() => setTab("wallet")}><span>▣</span><b>Connect wallet</b><small>Wallet overview</small></button>
+          <button onClick={() => setTab("wallet")}><span>▣</span><b>Wallet</b><small>Wallet overview</small></button>
         </section>
       </>}
 
@@ -99,21 +154,41 @@ export default function App() {
         <div className="detail-row"><span>Active miners</span><b>{busy ? "—" : fmt(status?.active_miners)}</b></div>
         <div className="detail-row"><span>Estimated daily reward</span><b>{busy ? "—" : fmt(status?.estimated_reward_per_day)} ZRL</b></div>
         <div className="detail-row"><span>Mode</span><b>{busy ? "—" : status?.mode || "—"}</b></div>
-        <div className="info-note">Mining is currently represented by in-app game statistics. This screen does not start real proof-of-work mining.</div>
+        <div className="detail-row"><span>Real proof-of-work</span><b>{status?.real_mining ? "Enabled" : "Not active"}</b></div>
+        <div className="info-note">This is virtual mining game accounting. It does not run real proof-of-work or mine cryptocurrency.</div>
       </section>}
 
       {tab === "upgrade" && <section className="content-card">
-        <span className="eyebrow">BOOST YOUR PROGRESS</span><h2>Miner upgrades</h2>
-        <div className="empty-visual">↗</div><h3>Upgrade center</h3>
-        <p>The upgrade interface is prepared as a menu section. Miner inventory, prices and purchase actions are not yet connected to the backend.</p>
-        <span className="feature-state">NOT CONNECTED</span>
+        <span className="eyebrow">BOOST YOUR PROGRESS</span><h2>Equipment catalog</h2>
+        <p>Catalog loaded from the Mining API. Purchases are intentionally unavailable until real pricing and payment verification are implemented.</p>
+        {sectionBusy && <div className="loading-line">Loading equipment…</div>}
+        {!sectionBusy && equipment.length === 0 && <div className="empty-state">No equipment is currently available in the catalog.</div>}
+        <div className="equipment-list">
+          {equipment.map((item) => <article className="equipment-item" key={item.id}>
+            <div className="equipment-icon">⛏</div>
+            <div className="equipment-copy"><b>{item.name}</b><small>{item.code}</small><span>{fmt(item.hashrate)} TH/s · {fmt(item.reward_per_day)} ZRL/day</span></div>
+            <div className="equipment-price"><b>{fmt(item.price_zrl)}</b><small>ZRL</small></div>
+          </article>)}
+        </div>
+        <span className="feature-state">CATALOG CONNECTED · PURCHASES DISABLED</span>
       </section>}
 
       {tab === "rewards" && <section className="content-card">
-        <span className="eyebrow">YOUR EARNINGS</span><h2>Rewards</h2>
+        <span className="eyebrow">YOUR EARNINGS</span><h2>Rewards history</h2>
         <div className="reward-total">{busy ? "—" : fmt(me?.balance_zrl)} <small>ZRL</small></div>
-        <p>Current internal ZRL balance from your account.</p>
-        <div className="info-note">A detailed reward history requires a transaction-history API. No reward records are fabricated or changed by this screen.</div>
+        <p>Current internal balance. History is read directly from your account ledger.</p>
+        <div className="period-switch" role="group" aria-label="History period">
+          {(["day", "week", "month"] as Period[]).map((value) => <button key={value} className={period === value ? "selected" : ""} onClick={() => setPeriod(value)}>{value === "day" ? "24H" : value === "week" ? "7D" : "30D"}</button>)}
+        </div>
+        {sectionBusy && <div className="loading-line">Loading reward history…</div>}
+        {!sectionBusy && rewards.length === 0 && <div className="empty-state">No reward entries in this period yet.</div>}
+        <div className="reward-list">
+          {rewards.map((item, index) => <article className="reward-item" key={item.created_at + "-" + index}>
+            <div><b>{kindLabel(item.kind)}</b><small>{dateLabel(item.created_at)}</small></div>
+            <strong>{fmt(item.amount_zrl)} ZRL</strong>
+          </article>)}
+        </div>
+        <div className="info-note">Ledger entries are shown as recorded by the API. Claim and blockchain transfer actions are not enabled here.</div>
       </section>}
 
       {tab === "wallet" && <section className="content-card">
@@ -121,7 +196,7 @@ export default function App() {
         <div className="wallet-symbol">▣</div>
         <h3>{me?.wallet_address ? "Wallet linked" : "No wallet linked yet"}</h3>
         <p className="wallet-address">{me?.wallet_address || "Connect a Solana wallet to see its linked address here."}</p>
-        <div className="info-note">Wallet linking and on-chain transfers are not triggered from this redesigned menu. Never share your seed phrase or private key.</div>
+        <div className="info-note">Wallet linking and on-chain transfers are not triggered from this menu. Never share your seed phrase or private key.</div>
         <div className="detail-row"><span>On-chain payouts</span><b>{status?.on_chain_payouts_enabled ? "Enabled in API" : "Disabled"}</b></div>
       </section>}
 
