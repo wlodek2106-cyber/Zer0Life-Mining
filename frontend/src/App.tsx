@@ -169,6 +169,16 @@ export default function App() {
     } catch(e) { setError(e instanceof Error ? e.message : "Ошибка открытия Farming"); }
     finally { setFarmBusy(false); }
   }
+  async function releaseFarm() {
+    setFarmBusy(true); setFarmMessage(""); setError("");
+    try {
+      const response = await fetch(API + "/api/farming/release", {method:"POST",headers:authHeaders()});
+      const data = await response.json(); if (!response.ok) throw Error(data.detail || "Principal release unavailable.");
+      setFarmMessage("Returned " + fmt(data.released_principal_zrl) + " ZRL principal to your internal balance. No Solana transfer was made.");
+      await Promise.all([loadFarming(), load()]);
+    } catch(e) { setError(e instanceof Error ? e.message : "Farming release error"); }
+    finally { setFarmBusy(false); }
+  }
   async function claimFarm() {
     setFarmBusy(true); setFarmMessage(""); setError("");
     try {
@@ -302,7 +312,7 @@ export default function App() {
         <label>Amount to lock (ZRL)</label>
         <input className="deposit-input" inputMode="decimal" value={farmAmount} onChange={e=>setFarmAmount(e.target.value)} placeholder="Enter ZRL amount" />
         <button className="wallet-connect-btn" onClick={createFarm} disabled={farmBusy || !farmAmount}>{farmBusy ? "Processing…" : "Start 12-month Farming"}</button>
-        <button className="wallet-connect-btn" onClick={claimFarm} disabled={farmBusy}>{farmBusy ? "Processing…" : "Claim daily rewards (20:00)"}</button>
+        <button className="wallet-connect-btn" onClick={claimFarm} disabled={farmBusy}>{farmBusy ? "Processing…" : "Claim daily rewards (20:00)"}</button>\n        <button className="wallet-connect-btn" onClick={releaseFarm} disabled={farmBusy}>{farmBusy ? "Processing…" : "Release matured principal"}</button>
         {farmMessage && <div className="wallet-success" role="status">{farmMessage}</div>}
         <h3>Your Farming positions</h3>
         {sectionBusy && <div className="loading-line">Loading positions…</div>}
