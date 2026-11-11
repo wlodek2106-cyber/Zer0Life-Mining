@@ -138,7 +138,7 @@ def decode_solana_address(address: str) -> bytes:
         raise HTTPException(400, "Invalid Solana wallet address")
     raw = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
     leading_zeroes = len(address) - len(address.lstrip("1"))
-    decoded = b"\\x00" * leading_zeroes + raw
+    decoded = bytes(leading_zeroes) + raw
     if len(decoded) != 32:
         raise HTTPException(400, "Invalid Solana public key")
     return decoded
