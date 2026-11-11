@@ -11,7 +11,9 @@ class Settings(BaseSettings):
     zrl_token_mint: str = "GPJjF6w38TYrNFUSkZSctW1dSoZSiu8CSFjgygjdtzuo"
     zrl_token_decimals: int = 6
     mining_network: str = "solana"
-    solana_rpc_url: str = "https://api.mainnet-beta.solana.com"
+    # Prefer an explicitly supplied RPC URL; otherwise use Helius when an API key is configured.
+    solana_rpc_url: str = ""
+    helius_api_key: str = ""
     solana_commitment: str = "confirmed"
     treasury_wallet_address: str = ""
     treasury_min_zrl_alert: float = 100000.0
@@ -29,6 +31,14 @@ class Settings(BaseSettings):
     mining_pool_alert_thresholds: str = "25,50,75,90,100"
     mining_pool_low_remaining_zrl: float = 5000000.0
     admin_telegram_ids: str = ""
+    @property
+    def rpc_url(self) -> str:
+        if self.solana_rpc_url.strip():
+            return self.solana_rpc_url.strip()
+        if self.helius_api_key.strip():
+            return f"https://mainnet.helius-rpc.com/?api-key={self.helius_api_key.strip()}"
+        return "https://api.mainnet-beta.solana.com"
+
     model_config = SettingsConfigDict(env_file="../.env", extra="ignore")
 
 settings = Settings()
