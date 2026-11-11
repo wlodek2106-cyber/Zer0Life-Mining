@@ -193,7 +193,7 @@ export default function App() {
     finally { setSectionBusy(false); }
   }
   async function bindStartReferral() {
-    const code = (window.Telegram?.WebApp as any)?.initDataUnsafe?.start_param || "";
+    const code = (window.Telegram?.WebApp as any)?.initDataUnsafe?.start_param || new URLSearchParams(window.location.search).get("ref") || "";
     if (!code) return;
     try { await fetch(API + "/api/referrals/bind", {method:"POST",headers:{...authHeaders(),"Content-Type":"application/json"},body:JSON.stringify({referral_code:code})}); } catch {}
   }
