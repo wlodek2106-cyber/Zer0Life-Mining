@@ -61,6 +61,9 @@ export default function App() {
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [adminAvailable, setAdminAvailable] = useState(false);
   const [adminData, setAdminData] = useState<any>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string>("");
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarMessage, setAvatarMessage] = useState("");
 
   function authHeaders() {
     const initData = window.Telegram?.WebApp?.initData || "";
@@ -234,6 +237,40 @@ export default function App() {
     throw Error(data.detail || "Could not save referral attribution");
   }
 
+  async function loadAvatar() {
+    try {
+      const response = await fetch(API + "/api/profile/avatar", { headers: authHeaders() });
+      if (!response.ok) return;
+      const data = await response.json();
+      setAvatarUrl(data.avatar ? "" : (data.data ? "data:" + data.content_type + ";base64," + data.data : ""));
+    } catch { /* Keep the default profile placeholder if avatar loading fails. */ }
+  }
+
+  async function uploadAvatar(file?: File) {
+    if (!file) return;
+    setAvatarBusy(true); setAvatarMessage(""); setError("");
+    try {
+      const form = new FormData(); form.append("file", file);
+      const response = await fetch(API + "/api/profile/avatar", { method: "POST", headers: authHeaders(), body: form });
+      const data = await response.json();
+      if (!response.ok) throw Error(data.detail || "Could not upload avatar.");
+      await loadAvatar();
+      setAvatarMessage("Profile photo updated.");
+    } catch (e) { setError(e instanceof Error ? e.message : "Avatar upload failed."); }
+    finally { setAvatarBusy(false); }
+  }
+
+  async function removeAvatar() {
+    setAvatarBusy(true); setAvatarMessage(""); setError("");
+    try {
+      const response = await fetch(API + "/api/profile/avatar", { method: "DELETE", headers: authHeaders() });
+      const data = await response.json();
+      if (!response.ok) throw Error(data.detail || "Could not remove avatar.");
+      setAvatarUrl(""); setAvatarMessage("Profile photo removed.");
+    } catch (e) { setError(e instanceof Error ? e.message : "Avatar removal failed."); }
+    finally { setAvatarBusy(false); }
+  }
+
   async function connectPhantom() {
     setWalletBusy(true);
     setWalletMessage("");
@@ -299,6 +336,7 @@ export default function App() {
     if (tab === "farming") loadFarming();
     if (tab === "community") loadCommunity();
     if (tab === "admin") loadAdmin();
+    if (tab === "profile") loadAvatar();
   }, [tab, period]);
 
   const title = tabs.find((item) => item.id === tab)?.label || "Home";
@@ -469,7 +507,14 @@ export default function App() {
       </section>}
       {tab === "profile" && <section className="content-card">
         <span className="eyebrow">YOUR ACCOUNT</span><h2>Profile</h2>
-        <div className="profile-avatar">{(me?.username || "Z").slice(0, 1).toUpperCase()}</div>
+        <div className="profile-avatar">{avatarUrl ? <img src={avatarUrl} alt="Profile avatar" /> : (me?.username || "Z").slice(0, 1).toUpperCase()}</div>
+        <label className="wallet-connect-btn avatar-upload-label">
+          {avatarBusy ? "Uploading…" : avatarUrl ? "Change profile photo" : "Upload profile photo"}
+          <input type="file" accept="image/jpeg,image/png,image/webp" disabled={avatarBusy} onChange={e => { uploadAvatar(e.target.files?.[0]); e.currentTarget.value = ""; }} />
+        </label>
+        {avatarUrl && <button className="wallet-connect-btn secondary-action" onClick={removeAvatar} disabled={avatarBusy}>Remove photo</button>}
+        <small className="avatar-hint">JPG, PNG or WEBP · up to 2 MB</small>
+        {avatarMessage && <div className="wallet-success" role="status">{avatarMessage}</div>}
         <h3>{me?.username ? "@" + me.username : "Zer0Life member"}</h3>
         <div className="detail-row"><span>Telegram account</span><b>{me?.username ? "Connected" : "Verified in Mini App"}</b></div>
         <div className="detail-row"><span>Internal balance</span><b>{busy ? "—" : fmt(me?.balance_zrl) + " ZRL"}</b></div>
