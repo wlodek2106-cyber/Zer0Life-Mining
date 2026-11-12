@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 const API = import.meta.env.VITE_API_URL || "";
-type Status = { hashrate: number; estimated_reward_per_day: number; active_miners: number; mode: string; real_mining: boolean; on_chain_payouts_enabled: boolean };
+type Status = { hashrate: number; equipment_hashrate?: number; farming_power_ths?: number; farming_locked_zrl?: string; active_farming_positions?: number; estimated_reward_per_day: number; active_miners: number; mode: string; real_mining: boolean; on_chain_payouts_enabled: boolean };
 type Me = { balance_zrl: string; wallet_address?: string | null; username?: string | null };
 type Equipment = { id: number; code: string; name: string; price_zrl: string; hashrate: string; reward_per_day: string };
 type Reward = { amount_zrl: string; kind: string; created_at: string };
@@ -328,7 +328,8 @@ export default function App() {
         <section className="section-block">
           <div className="section-title"><div><span className="eyebrow">LIVE PERFORMANCE</span><h2>Mining overview</h2></div><span className="live-tag">● LIVE DATA</span></div>
           <div className="metric-grid">
-            <Metric label="HASHRATE" value={busy ? "—" : fmt(status?.hashrate)} suffix="TH/s" icon="⌁" />
+            <Metric label="TOTAL VIRTUAL HASHRATE" value={busy ? "—" : fmt(status?.hashrate)} suffix="TH/s" icon="⌁" />
+            <Metric label="FARMING POWER" value={busy ? "—" : fmt(status?.farming_power_ths)} suffix="TH/s" icon="🌱" />
             <Metric label="EST. DAILY REWARD" value={busy ? "—" : fmt(status?.estimated_reward_per_day)} suffix="ZRL" icon="✧" />
             <Metric label="ACTIVE MINERS" value={busy ? "—" : fmt(status?.active_miners)} suffix="" icon="⛏" />
             <Metric label="MINING MODE" value={busy ? "—" : status?.mode || "—"} suffix="" icon="◈" />
@@ -343,7 +344,11 @@ export default function App() {
 
       {tab === "mining" && <section className="content-card">
         <span className="eyebrow">YOUR MINING SESSION</span><h2>Mining status</h2>
-        <div className="big-stat">{busy ? "—" : fmt(status?.hashrate)} <small>TH/s</small></div>
+        <div className="big-stat">{busy ? "—" : fmt(status?.hashrate)} <small>TH/s total virtual</small></div>
+        <div className="detail-row"><span>Equipment hashrate</span><b>{busy ? "—" : fmt(status?.equipment_hashrate)} TH/s</b></div>
+        <div className="detail-row"><span>Farming Power</span><b>{busy ? "—" : fmt(status?.farming_power_ths)} TH/s</b></div>
+        <div className="detail-row"><span>ZRL locked in Farming</span><b>{busy ? "—" : fmt(status?.farming_locked_zrl)} ZRL</b></div>
+        <div className="detail-row"><span>Active Farming positions</span><b>{busy ? "—" : fmt(status?.active_farming_positions)}</b></div>
         <div className="detail-row"><span>Active miners</span><b>{busy ? "—" : fmt(status?.active_miners)}</b></div>
         <div className="detail-row"><span>Estimated daily reward</span><b>{busy ? "—" : fmt(status?.estimated_reward_per_day)} ZRL</b></div>
         <div className="detail-row"><span>Mode</span><b>{busy ? "—" : status?.mode || "—"}</b></div>
