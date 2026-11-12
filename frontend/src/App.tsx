@@ -505,18 +505,19 @@ export default function App() {
       </section>}
 
       {tab === "upgrade" && <section className="content-card">
-        <span className="eyebrow">BOOST YOUR PROGRESS</span><h2>Equipment catalog</h2>
-        <p>Catalog loaded from the Mining API. Purchases are intentionally unavailable until real pricing and payment verification are implemented.</p>
+        <span className="eyebrow">BOOST YOUR PROGRESS</span><h2>Mining Equipment Store</h2>
+        <p>Choose equipment to increase your in-game Mining hashrate. Prices are displayed in ZRL.</p>
         {sectionBusy && <div className="loading-line">Loading equipment…</div>}
-        {!sectionBusy && equipment.length === 0 && <div className="empty-state">No equipment is currently available in the catalog.</div>}
+        {!sectionBusy && equipment.length === 0 && <div className="empty-state">Equipment catalog is being prepared.</div>}
         <div className="equipment-list">
           {equipment.map((item) => <article className="equipment-item" key={item.id}>
-            <div className="equipment-icon">⛏</div>
-            <div className="equipment-copy"><b>{item.name}</b><small>{item.code}</small><span>{fmt(item.hashrate)} TH/s · {fmt(item.reward_per_day)} ZRL/day</span></div>
+            <div className="equipment-icon">{item.hashrate >= 500 ? "⚡" : item.hashrate >= 200 ? "🏭" : item.hashrate >= 50 ? "🖥" : "⛏"}</div>
+            <div className="equipment-copy"><b>{item.name}</b><small>{item.code}</small><span>{fmt(item.hashrate)} TH/s · Mining equipment</span></div>
             <div className="equipment-price"><b>{fmt(item.price_zrl)}</b><small>ZRL</small></div>
           </article>)}
         </div>
-        <span className="feature-state">CATALOG CONNECTED · PURCHASES DISABLED</span>
+        <div className="info-note">Equipment hashrate is an in-game metric. Daily reward rates will be published separately after the reward schedule is finalized.</div>
+        <span className="feature-state">CATALOG AVAILABLE · ON-CHAIN CHECKOUT IN DEVELOPMENT</span>
       </section>}
 
       {tab === "rewards" && <section className="content-card">
