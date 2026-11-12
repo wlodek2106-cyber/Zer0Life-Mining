@@ -507,10 +507,10 @@ export default function App() {
       </section>}
       {tab === "profile" && <section className="content-card">
         <span className="eyebrow">YOUR ACCOUNT</span><h2>Profile</h2>
-        <div className="profile-avatar">{avatarUrl ? <img src={avatarUrl} alt="Profile avatar" /> : (me?.username || "Z").slice(0, 1).toUpperCase()}</div>
+        <div className="profile-avatar">{avatarUrl ? <img src={avatarUrl} alt="Profile avatar" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:"50%"}} /> : (me?.username || "Z").slice(0, 1).toUpperCase()}</div>
         <label className="wallet-connect-btn avatar-upload-label">
           {avatarBusy ? "Uploading…" : avatarUrl ? "Change profile photo" : "Upload profile photo"}
-          <input type="file" accept="image/jpeg,image/png,image/webp" disabled={avatarBusy} onChange={e => { uploadAvatar(e.target.files?.[0]); e.currentTarget.value = ""; }} />
+          <input type="file" accept="image/jpeg,image/png,image/webp" style={{display:"none"}} disabled={avatarBusy} onChange={e => { uploadAvatar(e.target.files?.[0]); e.currentTarget.value = ""; }} />
         </label>
         {avatarUrl && <button className="wallet-connect-btn secondary-action" onClick={removeAvatar} disabled={avatarBusy}>Remove photo</button>}
         <small className="avatar-hint">JPG, PNG or WEBP · up to 2 MB</small>
