@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, LargeBinary, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from .db import Base
 
@@ -158,3 +158,11 @@ class DailyMiningClaim(Base):
     amount_zrl: Mapped[float] = mapped_column(Numeric(24, 9))
     idempotency_key: Mapped[str] = mapped_column(String(96), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class UserAvatar(Base):
+    __tablename__ = "user_avatars"
+    telegram_id: Mapped[int] = mapped_column(ForeignKey("users.telegram_id"), primary_key=True)
+    content_type: Mapped[str] = mapped_column(String(32))
+    image_data: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
