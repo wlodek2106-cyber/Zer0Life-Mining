@@ -671,6 +671,9 @@ def leaderboard(user: User = Depends(current_user), db: Session = Depends(get_db
 @app.post("/api/farming/claim")
 def claim_farming(user: User = Depends(current_user), db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
+    # Always lock the global rewards pool before any user row. This consistent
+    # lock order avoids deadlocks with Mining accrual across concurrent users.
+    pool_state = lock_reward_pool(db)
     # Serialize all daily claims for one account; the unique idempotency key
     # remains the final database-level guard against duplicate submissions.
     locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
@@ -687,7 +690,6 @@ def claim_farming(user: User = Depends(current_user), db: Session = Depends(get_
     requested_amount = sum((farming_reward_due(p, now) for p in positions), Decimal("0"))
     if requested_amount <= 0:
         raise HTTPException(400, "No Farming rewards available")
-    pool_state = lock_reward_pool(db)
     referrers = []
     referrer_id = user.telegram_id
     for level in range(1, 4):
@@ -736,8 +738,9 @@ def claim_farming(user: User = Depends(current_user), db: Session = Depends(get_
 @app.post("/api/farming/release")
 def release_matured_farming(user: User = Depends(current_user), db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
-    # Use the same account-level lock as open/claim so release cannot race
-    # with another balance mutation for this Telegram account.
+    # Keep the global-pool -> user-row lock order used by every reward issuer.
+    pool_state = lock_reward_pool(db)
+    # Serialize balance mutations for this Telegram account.
     locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
     if locked_user is None:
         raise HTTPException(401, "User account not found")
@@ -749,7 +752,6 @@ def release_matured_farming(user: User = Depends(current_user), db: Session = De
     released = Decimal("0")
     maturity_rewards = Decimal("0")
     released_ids = []
-    pool_state = lock_reward_pool(db)
     pool_remaining = max(Decimal("0"), Decimal(str(settings.mining_rewards_allocation_zrl)) - reward_pool_usage(db))
     for position in positions:
         end = position.ends_at.replace(tzinfo=timezone.utc) if position.ends_at.tzinfo is None else position.ends_at
