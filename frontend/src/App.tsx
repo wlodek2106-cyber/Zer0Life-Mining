@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 const API = import.meta.env.VITE_API_URL || "";
 type Status = { hashrate: number; equipment_hashrate?: number; farming_power_ths?: number; farming_locked_zrl?: string; active_farming_positions?: number; estimated_reward_per_day: number; active_miners: number; mode: string; real_mining: boolean; on_chain_payouts_enabled: boolean };
-type Me = { balance_zrl: string; wallet_address?: string | null; username?: string | null };
+type Me = { balance_zrl: string; wallet_address?: string | null; username?: string | null; is_admin?: boolean; farming_max_zrl?: string };
 type Equipment = { id: number; code: string; name: string; price_zrl: string; hashrate: string; reward_per_day: string };
 type Reward = { amount_zrl: string; kind: string; created_at: string };
 type Period = "day" | "week" | "month";
@@ -364,10 +364,11 @@ export default function App() {
           {[1,3,6,9,12].map(months => <button type="button" key={months} className={farmDuration===months ? "farm-package selected" : "farm-package"} onClick={()=>setFarmDuration(months)}><b>{months}</b><small>month{months>1?"s":""}</small><strong>{(155*[12,11,10,9,8,7,6,5,4,3,2,1].slice(0,months).reduce((x,y)=>x+y,0)/78).toFixed(2)}%</strong><em>scheduled</em></button>)}
         </div>
         <label htmlFor="farm-amount">Amount to lock (ZRL)</label>
-        <input id="farm-amount" className="deposit-input" inputMode="decimal" type="number" min="0" step="any" value={farmAmount} onChange={e=>setFarmAmount(e.target.value)} placeholder="Enter ZRL amount" />
+        <div className="info-note">Maximum per Farming position: {fmt(me?.farming_max_zrl || "1000000")} ZRL {me?.is_admin ? "(Admin limit)" : "(User limit)"}.</div>
+        <input id="farm-amount" className="deposit-input" inputMode="decimal" type="number" min="0" max={me?.farming_max_zrl || "1000000"} step="any" value={farmAmount} onChange={e=>setFarmAmount(e.target.value)} placeholder="Enter ZRL amount" />
         <div className="farm-calculator"><div><span>Selected package</span><b>{farmDuration} months</b></div><div><span>Principal</span><b>{farmAmount && Number(farmAmount)>0 ? fmt(farmAmount)+" ZRL" : "—"}</b></div><div><span>Estimated total reward</span><b className="farm-estimate">{farmAmount && Number(farmAmount)>0 ? fmt(Number(farmAmount)*155*[12,11,10,9,8,7,6,5,4,3,2,1].slice(0,farmDuration).reduce((x,y)=>x+y,0)/7800)+" ZRL" : "—"}</b></div><div><span>Principal + scheduled reward</span><b>{farmAmount && Number(farmAmount)>0 ? fmt(Number(farmAmount)*(1+155*[12,11,10,9,8,7,6,5,4,3,2,1].slice(0,farmDuration).reduce((x,y)=>x+y,0)/7800))+" ZRL" : "—"}</b></div></div>
         <div className="farm-schedule"><b>Monthly reward schedule</b>{[12,11,10,9,8,7,6,5,4,3,2,1].slice(0,farmDuration).map((weight,index)=><div className="farm-month" key={index}><span>Month {index+1}</span><span>{(155*weight/78).toFixed(2)}% of principal</span><b>{farmAmount && Number(farmAmount)>0 ? fmt(Number(farmAmount)*155*weight/7800)+" ZRL" : "—"}</b></div>)}</div>
-        <button className="wallet-connect-btn" onClick={createFarm} disabled={farmBusy || !farmAmount || Number(farmAmount)<=0 || Number(farmAmount)>Number(me?.balance_zrl||0)}>{farmBusy ? "Processing…" : "Start " + farmDuration + "-month Farming"}</button>
+        <button className="wallet-connect-btn" onClick={createFarm} disabled={farmBusy || !farmAmount || Number(farmAmount)<=0 || Number(farmAmount)>Number(me?.balance_zrl||0) || Number(farmAmount)>Number(me?.farming_max_zrl||1000000)}>{farmBusy ? "Processing…" : "Start " + farmDuration + "-month Farming"}</button>
         <button className="wallet-connect-btn secondary-action" onClick={claimFarm} disabled={farmBusy}>{farmBusy ? "Processing…" : "Claim daily rewards · after 20:00"}</button>
         <button className="wallet-connect-btn secondary-action" onClick={releaseFarm} disabled={farmBusy}>{farmBusy ? "Processing…" : "Release matured principal"}</button>
         {farmMessage && <div className="wallet-success" role="status">{farmMessage}</div>}
