@@ -27,18 +27,30 @@ async def startup():
     # Seed the public equipment catalog without modifying existing equipment or user balances.
     with Session(engine) as catalog_db:
         catalog_items = [
-            ("GPU-10", "GPU Miner", Decimal("5000"), Decimal("10")),
-            ("ASIC-50", "ASIC Miner", Decimal("25000"), Decimal("50")),
-            ("INDUSTRIAL-200", "Industrial Miner", Decimal("100000"), Decimal("200")),
-            ("ULTRA-500", "Ultra Industrial Miner", Decimal("250000"), Decimal("500")),
+            ("GPU-10", "GPU Miner", Decimal("5000"), Decimal("10"), Decimal("50")),
+            ("ASIC-50", "ASIC Miner", Decimal("25000"), Decimal("50"), Decimal("250")),
+            ("INDUSTRIAL-200", "Industrial Miner", Decimal("100000"), Decimal("200"), Decimal("1000")),
+            ("ULTRA-500", "Ultra Industrial Miner", Decimal("250000"), Decimal("500"), Decimal("2500")),
         ]
-        for code, name, price, hashrate in catalog_items:
+        for code, name, price, hashrate, daily_reward in catalog_items:
             existing = catalog_db.scalar(select(Equipment).where(Equipment.code == code))
             if existing is None:
                 catalog_db.add(Equipment(
                     code=code, name=name, price_zrl=price,
-                    hashrate=hashrate, reward_per_day=Decimal("0"), enabled=True
+                    hashrate=hashrate, reward_per_day=daily_reward, enabled=True
                 ))
+            elif Decimal(str(existing.reward_per_day)) != daily_reward:
+                existing.price_zrl = price
+                existing.hashrate = hashrate
+                existing.reward_per_day = daily_reward
+                # Start the new reward schedule from deployment time; never backpay
+                # users for periods when the catalog showed zero daily rewards.
+                owned_rows = catalog_db.scalars(
+                    select(UserEquipment).where(UserEquipment.equipment_id == existing.id)
+                ).all()
+                activation_time = datetime.now(timezone.utc)
+                for owned in owned_rows:
+                    owned.last_accrued_at = activation_time
         catalog_db.commit()
     # Singleton row serializes reward issuance across all users and app replicas.
     with Session(engine) as startup_db:
