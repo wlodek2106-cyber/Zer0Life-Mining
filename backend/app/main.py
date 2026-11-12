@@ -402,6 +402,7 @@ def verify_withdrawal(payload: dict, user: User = Depends(current_user), db: Ses
     code = str(payload.get("code", "")).strip()
     if len(code) != 6 or not code.isdigit():
         raise HTTPException(400, "Enter the 6-digit Telegram code")
+    locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
     req = db.scalar(select(WithdrawalRequest).where(
         WithdrawalRequest.id == request_id, WithdrawalRequest.telegram_id == user.telegram_id
     ).with_for_update())
@@ -412,7 +413,6 @@ def verify_withdrawal(payload: dict, user: User = Depends(current_user), db: Ses
     expires = req.expires_at.replace(tzinfo=timezone.utc) if req.expires_at.tzinfo is None else req.expires_at
     if expires <= datetime.now(timezone.utc):
         req.status = "expired"
-        locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
         locked_user.internal_balance_zrl = Decimal(str(locked_user.internal_balance_zrl)) + Decimal(str(req.amount_zrl))
         db.add(RewardLedger(telegram_id=user.telegram_id, amount_zrl=req.amount_zrl,
             kind="withdrawal_refund", idempotency_key=f"withdrawal-refund:{req.id}"))
@@ -423,7 +423,6 @@ def verify_withdrawal(payload: dict, user: User = Depends(current_user), db: Ses
     if req.attempts > 5 or not hmac.compare_digest(req.code_hash, expected):
         if req.attempts >= 5:
             req.status = "cancelled"
-            locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
             locked_user.internal_balance_zrl = Decimal(str(locked_user.internal_balance_zrl)) + Decimal(str(req.amount_zrl))
             db.add(RewardLedger(telegram_id=user.telegram_id, amount_zrl=req.amount_zrl,
                 kind="withdrawal_refund", idempotency_key=f"withdrawal-refund:{req.id}"))
@@ -453,6 +452,7 @@ def cancel_withdrawal(payload: dict, user: User = Depends(current_user), db: Ses
         request_id = int(payload.get("withdrawal_id"))
     except (TypeError, ValueError):
         raise HTTPException(400, "Invalid withdrawal request")
+    locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
     req = db.scalar(select(WithdrawalRequest).where(
         WithdrawalRequest.id == request_id, WithdrawalRequest.telegram_id == user.telegram_id
     ).with_for_update())
@@ -460,7 +460,6 @@ def cancel_withdrawal(payload: dict, user: User = Depends(current_user), db: Ses
         raise HTTPException(404, "Withdrawal request not found")
     if req.status not in {"awaiting_code", "verified_pending"}:
         raise HTTPException(400, "This withdrawal request can no longer be cancelled")
-    locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
     locked_user.internal_balance_zrl = Decimal(str(locked_user.internal_balance_zrl)) + Decimal(str(req.amount_zrl))
     req.status = "cancelled"
     db.add(RewardLedger(telegram_id=user.telegram_id, amount_zrl=req.amount_zrl,
