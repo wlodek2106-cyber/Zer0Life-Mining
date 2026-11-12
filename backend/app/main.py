@@ -178,8 +178,8 @@ async def upload_profile_avatar(file: UploadFile = File(...), user: User = Depen
         raise HTTPException(status_code=400, detail="Image must be between 1 byte and 2 MB.")
     # Validate actual file signatures instead of trusting the browser MIME header.
     valid = (
-        (file.content_type == "image/jpeg" and data.startswith(b"\\xff\\xd8\\xff")) or
-        (file.content_type == "image/png" and data.startswith(b"\\x89PNG\\r\\n\\x1a\\n")) or
+        (file.content_type == "image/jpeg" and data.startswith(b"\xff\xd8\xff")) or
+        (file.content_type == "image/png" and data.startswith(b"\x89PNG\r\n\x1a\n")) or
         (file.content_type == "image/webp" and len(data) > 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP")
     )
     if not valid:
