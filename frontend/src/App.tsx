@@ -82,14 +82,19 @@ export default function App() {
     setError("");
     try {
       const headers = authHeaders();
-      const [a, b] = await Promise.all([
+      const [a, b, farmingResponse] = await Promise.all([
         fetch(API + "/api/mining/status", { headers }),
         fetch(API + "/api/me", { headers }),
+        fetch(API + "/api/farming/positions", { headers }),
       ]);
       if (a.status === 401 || b.status === 401) throw Error("Открой Mini App через Telegram-бота.");
       if (!a.ok || !b.ok) throw Error("Backend API пока не готов.");
       setStatus(await a.json());
       setMe(await b.json());
+      if (farmingResponse.ok) {
+        const farmingData = await farmingResponse.json();
+        setFarmPositions(Array.isArray(farmingData) ? farmingData : []);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка загрузки данных");
     } finally {
@@ -436,8 +441,9 @@ export default function App() {
           <div className="metric-grid">
             <Metric label="TOTAL VIRTUAL HASHRATE" value={busy ? "—" : fmt(status?.hashrate)} suffix="TH/s" icon="⌁" />
             <Metric label="FARMING POWER" value={busy ? "—" : fmt(status?.farming_power_ths)} suffix="TH/s" icon="🌱" />
-            <Metric label="EST. DAILY REWARD" value={busy ? "—" : fmt(status?.estimated_reward_per_day)} suffix="ZRL" icon="✧" />
+            <Metric label="EQUIPMENT DAILY REWARD" value={busy ? "—" : fmt(status?.estimated_reward_per_day)} suffix="ZRL" icon="✧" />
             <Metric label="ACTIVE MINERS" value={busy ? "—" : fmt(status?.active_miners)} suffix="" icon="⛏" />
+            <Metric label="FARMING REWARDS ACCRUED" value={busy ? "—" : fmt(farmPositions.reduce((sum, p) => sum + Number(p.pending_reward_zrl || 0), 0))} suffix="ZRL" icon="🌱" />
           </div>
         </section>
         <section className="quick-actions">
@@ -455,10 +461,9 @@ export default function App() {
         <div className="detail-row"><span>ZRL locked in Farming</span><b>{busy ? "—" : fmt(status?.farming_locked_zrl)} ZRL</b></div>
         <div className="detail-row"><span>Active Farming positions</span><b>{busy ? "—" : fmt(status?.active_farming_positions)}</b></div>
         <div className="detail-row"><span>Active miners</span><b>{busy ? "—" : fmt(status?.active_miners)}</b></div>
-        <div className="detail-row"><span>Estimated daily reward</span><b>{busy ? "—" : fmt(status?.estimated_reward_per_day)} ZRL</b></div>
-        <div className="detail-row"><span>Mode</span><b>{busy ? "—" : status?.mode || "—"}</b></div>
-        <div className="detail-row"><span>Real proof-of-work</span><b>{status?.real_mining ? "Enabled" : "Not active"}</b></div>
-        <div className="info-note">This is virtual mining game accounting. It does not run real proof-of-work or mine cryptocurrency.</div>
+        <div className="detail-row"><span>Equipment daily reward</span><b>{busy ? "—" : fmt(status?.estimated_reward_per_day)} ZRL</b></div>
+        <div className="detail-row"><span>Farming rewards accrued</span><b>{busy ? "—" : fmt(farmPositions.reduce((sum, p) => sum + Number(p.pending_reward_zrl || 0), 0))} ZRL</b></div>
+        <div className="info-note">Farming rewards are calculated separately from equipment rewards. TH/s is an in-game performance metric.</div>
       </section>}
 
 
