@@ -381,6 +381,7 @@ export default function App() {
         <h3>Leader ranks</h3>
         <div className="info-note">Bronze → Silver → Gold → Platinum → Diamond. Rank thresholds are provisional and require final approval before rewards or privileges are attached.</div>
         {leaderboard.map((x:any,i:number)=><article className="reward-item" key={`${x.username}-${i}`}><div><b>#{i+1} · {x.username}</b><small>{x.direct_referrals} direct referrals</small></div><strong>{x.rank}</strong></article>)}
+        <div className="info-note">Invited by: {referralData?.invited_by ? (referralData.invited_by.username ? "@"+referralData.invited_by.username : "Telegram user "+referralData.invited_by.telegram_id) : "No referrer linked to this account"}.</div>
         <div className="info-note">Partner percentages: Level 1 — 5%, Level 2 — 2%, Level 3 — 1%. Commissions are pending by level and are not spendable or withdrawable. On-chain partner payouts are disabled.</div>
         <h3>Partner commission history</h3>
         {!referralData?.commission_history?.length && <div className="empty-state">No partner commissions recorded yet.</div>}
