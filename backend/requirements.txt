@@ -5,3 +5,4 @@ psycopg[binary]
 pydantic-settings
 httpx
 PyNaCl
+python-multipart
