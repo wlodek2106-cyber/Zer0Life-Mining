@@ -332,7 +332,6 @@ export default function App() {
             <Metric label="FARMING POWER" value={busy ? "—" : fmt(status?.farming_power_ths)} suffix="TH/s" icon="🌱" />
             <Metric label="EST. DAILY REWARD" value={busy ? "—" : fmt(status?.estimated_reward_per_day)} suffix="ZRL" icon="✧" />
             <Metric label="ACTIVE MINERS" value={busy ? "—" : fmt(status?.active_miners)} suffix="" icon="⛏" />
-            <Metric label="MINING MODE" value={busy ? "—" : status?.mode || "—"} suffix="" icon="◈" />
           </div>
         </section>
         <section className="quick-actions">
