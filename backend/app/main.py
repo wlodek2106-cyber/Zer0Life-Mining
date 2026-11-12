@@ -114,7 +114,7 @@ def lock_reward_pool(db: Session):
         db.flush()
     return state
 
-def reward_pool_usage(db: Session) -> Decimal:
+def reward_pool_usage(db: Session, exclude_position_ids: set[int] | None = None) -> Decimal:
     issued = db.scalar(select(func.coalesce(func.sum(RewardLedger.amount_zrl), 0)).where(
         RewardLedger.kind.in_(("accrual", "farming_claim_internal", "farming_maturity_reward")),
         RewardLedger.amount_zrl > 0
@@ -125,7 +125,10 @@ def reward_pool_usage(db: Session) -> Decimal:
     # new Mining/Farming accruals from spending tokens already promised later.
     active_positions = db.scalars(select(FarmingPosition).where(FarmingPosition.status == "active")).all()
     future_farming = Decimal("0")
+    excluded = exclude_position_ids or set()
     for position in active_positions:
+        if position.id in excluded:
+            continue
         total = Decimal(str(position.principal_zrl)) * Decimal("1.55")
         claimed = Decimal(str(position.claimed_reward_zrl))
         future_farming += max(Decimal("0"), total - claimed)
@@ -553,6 +556,8 @@ def create_farming_position(payload: dict, user: User = Depends(current_user), d
     duration_months = int(payload.get("duration_months", 12))
     if duration_months not in {1, 3, 6, 9, 12}:
         raise HTTPException(400, "Choose a Farming package: 1, 3, 6, 9 or 12 months")
+    # Consistent global reward-pool -> user-row lock order.
+    pool_state = lock_reward_pool(db)
     # Serialize balance-changing actions for this user to prevent concurrent
     # opens from spending the same internal balance twice.
     locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
@@ -560,7 +565,6 @@ def create_farming_position(payload: dict, user: User = Depends(current_user), d
         raise HTTPException(401, "User account not found")
     if amount <= 0 or amount > Decimal(str(locked_user.internal_balance_zrl)):
         raise HTTPException(400, "Invalid amount or insufficient available balance")
-    pool_state = lock_reward_pool(db)
     max_partner_rate = Decimal("0.08")
     required_reward_reserve = (amount * Decimal("1.55") * (Decimal("1") + max_partner_rate)).quantize(Decimal("0.000000001"))
     pool_remaining = max(Decimal("0"), Decimal(str(settings.mining_rewards_allocation_zrl)) - reward_pool_usage(db))
@@ -768,7 +772,12 @@ def release_matured_farming(user: User = Depends(current_user), db: Session = De
     released = Decimal("0")
     maturity_rewards = Decimal("0")
     released_ids = []
-    pool_remaining = max(Decimal("0"), Decimal(str(settings.mining_rewards_allocation_zrl)) - reward_pool_usage(db))
+    matured_position_ids = {
+        position.id for position in positions
+        if (position.ends_at.replace(tzinfo=timezone.utc) if position.ends_at.tzinfo is None else position.ends_at) <= now
+    }
+    pool_remaining = max(Decimal("0"), Decimal(str(settings.mining_rewards_allocation_zrl)) -
+        reward_pool_usage(db, exclude_position_ids=matured_position_ids))
     for position in positions:
         end = position.ends_at.replace(tzinfo=timezone.utc) if position.ends_at.tzinfo is None else position.ends_at
         if end > now:
