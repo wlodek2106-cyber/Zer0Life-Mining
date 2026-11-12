@@ -221,7 +221,17 @@ export default function App() {
   async function bindStartReferral() {
     const code = (window.Telegram?.WebApp as any)?.initDataUnsafe?.start_param || new URLSearchParams(window.location.search).get("ref") || "";
     if (!code) return;
-    try { await fetch(API + "/api/referrals/bind", {method:"POST",headers:{...authHeaders(),"Content-Type":"application/json"},body:JSON.stringify({referral_code:code})}); } catch {}
+    const response = await fetch(API + "/api/referrals/bind", {
+      method:"POST",
+      headers:{...authHeaders(),"Content-Type":"application/json"},
+      body:JSON.stringify({referral_code:code})
+    });
+    if (response.ok) return;
+    const data = await response.json().catch(() => ({}));
+    // A previously bound account is expected on later app opens; never overwrite it.
+    if (response.status === 409 && String(data.detail || "").includes("already set")) return;
+    if (response.status === 400) throw Error(data.detail || "Invalid referral code");
+    throw Error(data.detail || "Could not save referral attribution");
   }
 
   async function connectPhantom() {
@@ -270,7 +280,17 @@ export default function App() {
   useEffect(() => {
     window.Telegram?.WebApp?.ready();
     window.Telegram?.WebApp?.expand();
-    load();
+    (async () => {
+      try {
+        // Bind the inviter before loading Community data. Previously this
+        // function existed but was never called, so registrations could remain
+        // unassigned even when the deep-link carried a referral code.
+        await bindStartReferral();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Referral attribution failed");
+      }
+      await load();
+    })();
   }, []);
 
   useEffect(() => {
