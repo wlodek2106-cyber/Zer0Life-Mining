@@ -168,9 +168,29 @@ def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
 def mining_status(user: User = Depends(current_user), db: Session = Depends(get_db)):
     accrue(db, user)
     rows = db.execute(select(UserEquipment, Equipment).join(Equipment, Equipment.id == UserEquipment.equipment_id).where(UserEquipment.telegram_id == user.telegram_id)).all()
-    hashrate = sum(float(item.hashrate) * owned.quantity for owned, item in rows)
+    equipment_hashrate = sum(float(item.hashrate) * owned.quantity for owned, item in rows)
     daily = sum(float(item.reward_per_day) * owned.quantity for owned, item in rows)
-    return {"hashrate": hashrate, "estimated_reward_per_day": daily, "active_miners": sum(owned.quantity for owned, item in rows), "balance_zrl": str(user.internal_balance_zrl), "mode": "virtual_game", "real_mining": False, "on_chain_payouts_enabled": False}
+    active_farming = db.scalars(select(FarmingPosition).where(
+        FarmingPosition.telegram_id == user.telegram_id, FarmingPosition.status == "active"
+    )).all()
+    farming_locked = sum((Decimal(str(position.principal_zrl)) for position in active_farming), Decimal("0"))
+    # Game-only display conversion: every 10,000 actively locked ZRL adds 1 virtual TH/s.
+    # This does not alter equipment rewards, Farming rewards, or on-chain balances.
+    farming_power = farming_locked / Decimal("10000")
+    total_virtual_hashrate = Decimal(str(equipment_hashrate)) + farming_power
+    return {
+        "hashrate": float(total_virtual_hashrate),
+        "equipment_hashrate": equipment_hashrate,
+        "farming_power_ths": float(farming_power),
+        "farming_locked_zrl": str(farming_locked),
+        "estimated_reward_per_day": daily,
+        "active_miners": sum(owned.quantity for owned, item in rows),
+        "active_farming_positions": len(active_farming),
+        "balance_zrl": str(user.internal_balance_zrl),
+        "mode": "virtual_game",
+        "real_mining": False,
+        "on_chain_payouts_enabled": False
+    }
 
 def decode_solana_address(address: str) -> bytes:
     alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
