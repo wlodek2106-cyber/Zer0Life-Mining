@@ -602,6 +602,8 @@ def referrals_me(user: User = Depends(current_user), db: Session = Depends(get_d
         children = db.scalars(select(ReferralEdge.telegram_id).where(ReferralEdge.referrer_telegram_id.in_(parent_ids))).all() if parent_ids else []
         levels.append({"level": level, "count": len(children), "rate": str(PARTNER_RATES[level] * 100) + "%"})
         parent_ids = list(children)
+    parent_edge = db.get(ReferralEdge, user.telegram_id)
+    parent_user = db.get(User, parent_edge.referrer_telegram_id) if parent_edge else None
     commissions = db.scalar(select(func.coalesce(func.sum(PartnerCommission.amount_zrl), 0)).where(PartnerCommission.beneficiary_telegram_id == user.telegram_id)) or 0
     commission_by_level = []
     for level in range(1, 4):
@@ -618,6 +620,7 @@ def referrals_me(user: User = Depends(current_user), db: Session = Depends(get_d
     return {
         "referral_code": profile.referral_code,
         "referral_link": "https://t.me/Zer0lifeMining_bot?start=" + profile.referral_code,
+        "invited_by": ({"telegram_id": parent_user.telegram_id, "username": parent_user.username} if parent_user else None),
         "levels": levels,
         "partner_earnings_zrl": str(Decimal(str(commissions))),
         "partner_earnings_pending_zrl": str(Decimal(str(commissions))),
@@ -650,8 +653,16 @@ def bind_referral(payload: dict, user: User = Depends(current_user), db: Session
     profile = db.scalar(select(ReferralProfile).where(ReferralProfile.referral_code == code))
     if not profile or profile.telegram_id == user.telegram_id:
         raise HTTPException(400, "Invalid referral code")
-    if db.get(ReferralEdge, user.telegram_id):
-        raise HTTPException(409, "Referrer is already set and cannot be changed")
+    existing_edge = db.get(ReferralEdge, user.telegram_id)
+    if existing_edge:
+        if existing_edge.referrer_telegram_id == profile.telegram_id:
+            return {"ok": True, "already_bound": True}
+        existing_referrer = db.get(User, existing_edge.referrer_telegram_id)
+        raise HTTPException(409, {
+            "message": "Referrer is already set and cannot be changed",
+            "existing_referrer_telegram_id": existing_edge.referrer_telegram_id,
+            "existing_referrer_username": existing_referrer.username if existing_referrer else None
+        })
     ancestor_id = profile.telegram_id
     visited = set()
     while ancestor_id and ancestor_id not in visited:
