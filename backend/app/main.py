@@ -719,7 +719,12 @@ def claim_farming(user: User = Depends(current_user), db: Session = Depends(get_
         referrers.append((level, edge.referrer_telegram_id))
         referrer_id = edge.referrer_telegram_id
     commission_rate = sum((PARTNER_RATES[level] for level, _ in referrers), Decimal("0"))
-    pool_remaining = max(Decimal("0"), Decimal(str(settings.mining_rewards_allocation_zrl)) - reward_pool_usage(db))
+    # Claimed rewards and their commissions replace the same amount of
+    # previously reserved future Farming liability; add that due liability
+    # back to available capacity before calculating the payable claim.
+    claim_liability = requested_amount * (Decimal("1") + commission_rate)
+    pool_remaining = max(Decimal("0"), Decimal(str(settings.mining_rewards_allocation_zrl)) -
+        reward_pool_usage(db) + claim_liability)
     amount = min(requested_amount, pool_remaining / (Decimal("1") + commission_rate))
     if amount <= 0:
         raise HTTPException(409, "The shared 70m ZRL rewards pool has been exhausted")
