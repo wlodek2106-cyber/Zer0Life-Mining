@@ -166,3 +166,19 @@ class UserAvatar(Base):
     content_type: Mapped[str] = mapped_column(String(32))
     image_data: Mapped[bytes] = mapped_column(LargeBinary)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class WithdrawalRequest(Base):
+    __tablename__ = "withdrawal_requests"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(ForeignKey("users.telegram_id"), index=True)
+    amount_zrl: Mapped[float] = mapped_column(Numeric(24, 9))
+    destination_wallet: Mapped[str] = mapped_column(String(64))
+    code_hash: Mapped[str] = mapped_column(String(128))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(24), default="awaiting_code", index=True)
+    tx_signature: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
