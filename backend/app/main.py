@@ -162,7 +162,10 @@ def health(): return {"ok": True, "service": "zer0life-mining-api", "version": "
 @app.get("/api/me")
 def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
     accrue(db, user)
-    return {"telegram_id": user.telegram_id, "username": user.username, "wallet_address": user.wallet_address, "balance_zrl": str(user.internal_balance_zrl)}
+    admin_ids = {int(x.strip()) for x in settings.admin_telegram_ids.split(",") if x.strip().isdigit()}
+    return {"telegram_id": user.telegram_id, "username": user.username, "wallet_address": user.wallet_address,
+        "balance_zrl": str(user.internal_balance_zrl), "is_admin": user.telegram_id in admin_ids,
+        "farming_max_zrl": "10000000" if user.telegram_id in admin_ids else "1000000"}
 
 @app.get("/api/mining/status")
 def mining_status(user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -588,6 +591,10 @@ def create_farming_position(payload: dict, user: User = Depends(current_user), d
         raise HTTPException(401, "User account not found")
     if amount <= 0 or amount > Decimal(str(locked_user.internal_balance_zrl)):
         raise HTTPException(400, "Invalid amount or insufficient available balance")
+    admin_ids = {int(x.strip()) for x in settings.admin_telegram_ids.split(",") if x.strip().isdigit()}
+    farming_max = Decimal("10000000") if user.telegram_id in admin_ids else Decimal("1000000")
+    if amount > farming_max:
+        raise HTTPException(400, f"Maximum Farming amount for this account is {farming_max} ZRL")
     max_partner_rate = Decimal("0.08")
     required_reward_reserve = (amount * Decimal("1.55") * (Decimal("1") + max_partner_rate)).quantize(Decimal("0.000000001"))
     pool_remaining = max(Decimal("0"), Decimal(str(settings.mining_rewards_allocation_zrl)) - reward_pool_usage(db))
