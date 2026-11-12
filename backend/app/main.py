@@ -120,7 +120,17 @@ def reward_pool_usage(db: Session) -> Decimal:
         RewardLedger.amount_zrl > 0
     )) or 0
     partner = db.scalar(select(func.coalesce(func.sum(PartnerCommission.amount_zrl), 0))) or 0
-    return Decimal(str(issued)) + Decimal(str(partner))
+    # Reserve the full remaining scheduled reward on every active Farming
+    # position, plus the maximum 8% three-level partner liability. This stops
+    # new Mining/Farming accruals from spending tokens already promised later.
+    active_positions = db.scalars(select(FarmingPosition).where(FarmingPosition.status == "active")).all()
+    future_farming = Decimal("0")
+    for position in active_positions:
+        total = Decimal(str(position.principal_zrl)) * Decimal("1.55")
+        claimed = Decimal(str(position.claimed_reward_zrl))
+        future_farming += max(Decimal("0"), total - claimed)
+    future_partner_reserve = (future_farming * Decimal("0.08")).quantize(Decimal("0.000000001"))
+    return Decimal(str(issued)) + Decimal(str(partner)) + future_farming + future_partner_reserve
 
 def accrue(db: Session, user: User):
     rows = db.execute(select(UserEquipment, Equipment).join(Equipment, Equipment.id == UserEquipment.equipment_id).where(UserEquipment.telegram_id == user.telegram_id)).all()
@@ -550,6 +560,12 @@ def create_farming_position(payload: dict, user: User = Depends(current_user), d
         raise HTTPException(401, "User account not found")
     if amount <= 0 or amount > Decimal(str(locked_user.internal_balance_zrl)):
         raise HTTPException(400, "Invalid amount or insufficient available balance")
+    pool_state = lock_reward_pool(db)
+    max_partner_rate = Decimal("0.08")
+    required_reward_reserve = (amount * Decimal("1.55") * (Decimal("1") + max_partner_rate)).quantize(Decimal("0.000000001"))
+    pool_remaining = max(Decimal("0"), Decimal(str(settings.mining_rewards_allocation_zrl)) - reward_pool_usage(db))
+    if required_reward_reserve > pool_remaining:
+        raise HTTPException(409, "Insufficient unreserved rewards capacity for this Farming position")
     now = datetime.now(timezone.utc)
     user = locked_user
     user.internal_balance_zrl = Decimal(str(user.internal_balance_zrl)) - amount
