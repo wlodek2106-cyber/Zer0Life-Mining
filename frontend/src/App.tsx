@@ -404,6 +404,7 @@ export default function App() {
     if (tab === "community") loadCommunity();
     if (tab === "admin") loadAdmin();
     if (tab === "profile") loadAvatar();
+    if (tab === "wallet") loadWithdrawals();
   }, [tab, period]);
 
   const title = tabs.find((item) => item.id === tab)?.label || "Home";
