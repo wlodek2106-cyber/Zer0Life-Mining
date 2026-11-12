@@ -4,6 +4,7 @@ from uuid import uuid4
 import hashlib
 import hmac
 import base64
+import secrets
 from fastapi import FastAPI, Depends, Header, HTTPException, Request, UploadFile, File
 import httpx
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
 from .db import Base, engine, get_db
-from .models import User, Equipment, UserEquipment, RewardLedger, Purchase, WalletChallenge, DepositTransaction, DepositIntent, FarmingPosition, ReferralProfile, ReferralEdge, PartnerCommission, DailyMiningClaim, MiningPoolState, UserAvatar
+from .models import User, Equipment, UserEquipment, RewardLedger, Purchase, WalletChallenge, DepositTransaction, DepositIntent, FarmingPosition, ReferralProfile, ReferralEdge, PartnerCommission, DailyMiningClaim, MiningPoolState, UserAvatar, WithdrawalRequest
 from .auth import verify_telegram_init_data
 from .config import settings
 
@@ -312,6 +313,161 @@ def wallet_verify(payload: dict, user: User = Depends(current_user), db: Session
     challenge.used = True
     db.commit()
     return {"ok": True, "wallet_address": address, "message": "Wallet ownership verified and linked."}
+
+def withdrawal_code_hash(request_id: int, telegram_id: int, code: str) -> str:
+    if not settings.bot_token:
+        raise HTTPException(503, "Telegram bot is not configured")
+    message = f"zrl-withdrawal:{request_id}:{telegram_id}:{code}".encode()
+    return hmac.new(settings.bot_token.encode(), message, hashlib.sha256).hexdigest()
+
+
+async def send_withdrawal_code(telegram_id: int, amount: Decimal, code: str):
+    if not settings.bot_token:
+        raise HTTPException(503, "Telegram bot is not configured")
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.post(
+            f"https://api.telegram.org/bot{settings.bot_token}/sendMessage",
+            json={"chat_id": telegram_id, "text":
+                f"Zer0Life Mining withdrawal confirmation\n\n"
+                f"Amount: {amount} ZRL\n"
+                f"Confirmation code: {code}\n"
+                f"Valid for 5 minutes. Never share this code.\n\n"
+                f"After verification, the withdrawal will be queued for payout review. "
+                f"This message does not mean tokens have been sent."}
+        )
+        result = response.json()
+        if response.status_code >= 400 or not result.get("ok"):
+            raise HTTPException(502, "Could not send the confirmation code. Start @Zer0lifeMining_bot in Telegram and try again.")
+
+
+@app.post("/api/wallet/withdrawals/request")
+async def request_withdrawal(payload: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    try:
+        amount = Decimal(str(payload.get("amount_zrl", "")))
+    except Exception:
+        raise HTTPException(400, "Enter a valid ZRL amount")
+    if not amount.is_finite() or amount <= 0 or amount > Decimal("1000000000"):
+        raise HTTPException(400, "Withdrawal amount must be greater than zero")
+    if not user.wallet_address:
+        raise HTTPException(400, "Connect and verify your Solana wallet first")
+    destination = str(payload.get("destination_wallet", "")).strip()
+    decode_solana_address(destination)
+    if destination != user.wallet_address:
+        raise HTTPException(400, "Withdrawals can only be sent to your verified linked wallet")
+    # Lock the account row to serialize concurrent withdrawal requests.
+    locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
+    if locked_user is None:
+        raise HTTPException(404, "User account not found")
+    if Decimal(str(locked_user.internal_balance_zrl)) < amount:
+        raise HTTPException(400, "Insufficient available ZRL balance")
+    locked_user.internal_balance_zrl = Decimal(str(locked_user.internal_balance_zrl)) - amount
+    withdrawal = WithdrawalRequest(
+        telegram_id=user.telegram_id, amount_zrl=amount, destination_wallet=destination,
+        code_hash="pending", expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        attempts=0, status="awaiting_code"
+    )
+    db.add(withdrawal)
+    db.flush()
+    code = f"{secrets.randbelow(1000000):06d}"
+    withdrawal.code_hash = withdrawal_code_hash(withdrawal.id, user.telegram_id, code)
+    db.add(RewardLedger(
+        telegram_id=user.telegram_id, amount_zrl=-amount, kind="withdrawal_hold",
+        idempotency_key=f"withdrawal-hold:{withdrawal.id}"
+    ))
+    db.commit()
+    try:
+        await send_withdrawal_code(user.telegram_id, amount, code)
+    except Exception:
+        # Restore the internal balance if Telegram delivery failed; make refund idempotent.
+        locked = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
+        req = db.scalar(select(WithdrawalRequest).where(WithdrawalRequest.id == withdrawal.id).with_for_update())
+        if req and req.status == "awaiting_code":
+            locked.internal_balance_zrl = Decimal(str(locked.internal_balance_zrl)) + amount
+            req.status = "cancelled"
+            db.add(RewardLedger(telegram_id=user.telegram_id, amount_zrl=amount,
+                kind="withdrawal_refund", idempotency_key=f"withdrawal-refund:{req.id}"))
+            db.commit()
+        raise
+    return {"ok": True, "withdrawal_id": withdrawal.id, "status": "awaiting_code",
+            "expires_at": withdrawal.expires_at.isoformat(),
+            "message": "Confirmation code sent to your Telegram. ZRL is reserved until this request is verified or cancelled."}
+
+
+@app.post("/api/wallet/withdrawals/verify")
+def verify_withdrawal(payload: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    try:
+        request_id = int(payload.get("withdrawal_id"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Invalid withdrawal request")
+    code = str(payload.get("code", "")).strip()
+    if len(code) != 6 or not code.isdigit():
+        raise HTTPException(400, "Enter the 6-digit Telegram code")
+    req = db.scalar(select(WithdrawalRequest).where(
+        WithdrawalRequest.id == request_id, WithdrawalRequest.telegram_id == user.telegram_id
+    ).with_for_update())
+    if req is None:
+        raise HTTPException(404, "Withdrawal request not found")
+    if req.status != "awaiting_code":
+        raise HTTPException(400, f"Withdrawal request is {req.status}")
+    expires = req.expires_at.replace(tzinfo=timezone.utc) if req.expires_at.tzinfo is None else req.expires_at
+    if expires <= datetime.now(timezone.utc):
+        req.status = "expired"
+        locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
+        locked_user.internal_balance_zrl = Decimal(str(locked_user.internal_balance_zrl)) + Decimal(str(req.amount_zrl))
+        db.add(RewardLedger(telegram_id=user.telegram_id, amount_zrl=req.amount_zrl,
+            kind="withdrawal_refund", idempotency_key=f"withdrawal-refund:{req.id}"))
+        db.commit()
+        raise HTTPException(400, "Code expired. Reserved ZRL has been returned to your balance.")
+    req.attempts += 1
+    expected = withdrawal_code_hash(req.id, user.telegram_id, code)
+    if req.attempts > 5 or not hmac.compare_digest(req.code_hash, expected):
+        if req.attempts >= 5:
+            req.status = "cancelled"
+            locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
+            locked_user.internal_balance_zrl = Decimal(str(locked_user.internal_balance_zrl)) + Decimal(str(req.amount_zrl))
+            db.add(RewardLedger(telegram_id=user.telegram_id, amount_zrl=req.amount_zrl,
+                kind="withdrawal_refund", idempotency_key=f"withdrawal-refund:{req.id}"))
+        db.commit()
+        raise HTTPException(400, "Incorrect code. " + ("Request cancelled and ZRL refunded." if req.attempts >= 5 else f"{5-req.attempts} attempts remaining."))
+    req.status = "verified_pending"
+    req.verified_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"ok": True, "status": req.status, "message":
+        "Telegram code verified. Your withdrawal is awaiting payout review; no Solana transfer has been made because on-chain payouts are currently disabled."}
+
+
+@app.get("/api/wallet/withdrawals")
+def list_withdrawals(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = db.scalars(select(WithdrawalRequest).where(
+        WithdrawalRequest.telegram_id == user.telegram_id
+    ).order_by(WithdrawalRequest.created_at.desc()).limit(20)).all()
+    return [{"id": row.id, "amount_zrl": str(row.amount_zrl), "destination_wallet": row.destination_wallet,
+             "status": row.status, "created_at": row.created_at.isoformat(),
+             "verified_at": row.verified_at.isoformat() if row.verified_at else None,
+             "tx_signature": row.tx_signature} for row in rows]
+
+
+@app.post("/api/wallet/withdrawals/cancel")
+def cancel_withdrawal(payload: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    try:
+        request_id = int(payload.get("withdrawal_id"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Invalid withdrawal request")
+    req = db.scalar(select(WithdrawalRequest).where(
+        WithdrawalRequest.id == request_id, WithdrawalRequest.telegram_id == user.telegram_id
+    ).with_for_update())
+    if req is None:
+        raise HTTPException(404, "Withdrawal request not found")
+    if req.status not in {"awaiting_code", "verified_pending"}:
+        raise HTTPException(400, "This withdrawal request can no longer be cancelled")
+    locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
+    locked_user.internal_balance_zrl = Decimal(str(locked_user.internal_balance_zrl)) + Decimal(str(req.amount_zrl))
+    req.status = "cancelled"
+    db.add(RewardLedger(telegram_id=user.telegram_id, amount_zrl=req.amount_zrl,
+        kind="withdrawal_refund", idempotency_key=f"withdrawal-refund:{req.id}"))
+    db.commit()
+    return {"ok": True, "status": req.status, "refunded_zrl": str(req.amount_zrl)}
+
 
 @app.get("/api/deposits/details")
 def deposit_details(user: User = Depends(current_user)):
