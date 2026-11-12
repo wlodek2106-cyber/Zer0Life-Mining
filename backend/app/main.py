@@ -593,8 +593,12 @@ def create_farming_position(payload: dict, user: User = Depends(current_user), d
         raise HTTPException(400, "Invalid amount or insufficient available balance")
     admin_ids = {int(x.strip()) for x in settings.admin_telegram_ids.split(",") if x.strip().isdigit()}
     farming_max = Decimal("10000000") if user.telegram_id in admin_ids else Decimal("1000000")
-    if amount > farming_max:
-        raise HTTPException(400, f"Maximum Farming amount for this account is {farming_max} ZRL")
+    already_locked = db.scalar(select(func.coalesce(func.sum(FarmingPosition.principal_zrl), 0)).where(
+        FarmingPosition.telegram_id == user.telegram_id, FarmingPosition.status == "active"
+    )) or 0
+    if Decimal(str(already_locked)) + amount > farming_max:
+        available_limit = max(Decimal("0"), farming_max - Decimal(str(already_locked)))
+        raise HTTPException(400, f"Total active Farming limit is {farming_max} ZRL; available additional limit: {available_limit} ZRL")
     max_partner_rate = Decimal("0.08")
     required_reward_reserve = (amount * Decimal("1.55") * (Decimal("1") + max_partner_rate)).quantize(Decimal("0.000000001"))
     pool_remaining = max(Decimal("0"), Decimal(str(settings.mining_rewards_allocation_zrl)) - reward_pool_usage(db))
