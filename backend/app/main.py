@@ -4,7 +4,7 @@ from uuid import uuid4
 import hashlib
 import hmac
 import base64
-from fastapi import FastAPI, Depends, Header, HTTPException, Request
+from fastapi import FastAPI, Depends, Header, HTTPException, Request, UploadFile, File
 import httpx
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
 from .db import Base, engine, get_db
-from .models import User, Equipment, UserEquipment, RewardLedger, Purchase, WalletChallenge, DepositTransaction, DepositIntent, FarmingPosition, ReferralProfile, ReferralEdge, PartnerCommission, DailyMiningClaim, MiningPoolState
+from .models import User, Equipment, UserEquipment, RewardLedger, Purchase, WalletChallenge, DepositTransaction, DepositIntent, FarmingPosition, ReferralProfile, ReferralEdge, PartnerCommission, DailyMiningClaim, MiningPoolState, UserAvatar
 from .auth import verify_telegram_init_data
 from .config import settings
 
@@ -158,6 +158,50 @@ def accrue(db: Session, user: User):
 
 @app.get("/health")
 def health(): return {"ok": True, "service": "zer0life-mining-api", "version": "0.19.0"}
+
+@app.get("/api/profile/avatar")
+def get_profile_avatar(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    avatar = db.get(UserAvatar, user.telegram_id)
+    if not avatar:
+        return {"avatar": None}
+    return {"content_type": avatar.content_type, "data": base64.b64encode(avatar.image_data).decode("ascii")}
+
+
+@app.post("/api/profile/avatar")
+async def upload_profile_avatar(file: UploadFile = File(...), user: User = Depends(current_user), db: Session = Depends(get_db)):
+    allowed = {"image/jpeg", "image/png", "image/webp"}
+    if file.content_type not in allowed:
+        raise HTTPException(status_code=400, detail="Upload a JPG, PNG or WEBP image.")
+    data = await file.read(2 * 1024 * 1024 + 1)
+    if not data or len(data) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image must be between 1 byte and 2 MB.")
+    # Validate actual file signatures instead of trusting the browser MIME header.
+    valid = (
+        (file.content_type == "image/jpeg" and data.startswith(b"\\xff\\xd8\\xff")) or
+        (file.content_type == "image/png" and data.startswith(b"\\x89PNG\\r\\n\\x1a\\n")) or
+        (file.content_type == "image/webp" and len(data) > 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP")
+    )
+    if not valid:
+        raise HTTPException(status_code=400, detail="The uploaded file is not a valid JPG, PNG or WEBP image.")
+    avatar = db.get(UserAvatar, user.telegram_id)
+    if avatar is None:
+        avatar = UserAvatar(telegram_id=user.telegram_id, content_type=file.content_type, image_data=data)
+        db.add(avatar)
+    else:
+        avatar.content_type = file.content_type
+        avatar.image_data = data
+    db.commit()
+    return {"ok": True, "content_type": avatar.content_type}
+
+
+@app.delete("/api/profile/avatar")
+def delete_profile_avatar(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    avatar = db.get(UserAvatar, user.telegram_id)
+    if avatar:
+        db.delete(avatar)
+        db.commit()
+    return {"ok": True}
+
 
 @app.get("/api/me")
 def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
