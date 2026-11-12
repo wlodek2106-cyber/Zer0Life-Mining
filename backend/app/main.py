@@ -488,6 +488,8 @@ def admin_partner_dashboard(admin: User = Depends(admin_user), db: Session = Dep
     bonus = Decimal(str(settings.mining_bonus_allocation_zrl))
     issued = Decimal(str(issued))
     partner_pending = Decimal(str(total))
+    committed_usage = reward_pool_usage(db)
+    committed_farming = max(Decimal("0"), committed_usage - issued - partner_pending)
     return {
         "supply_cap_zrl": str(total_cap),
         "rewards_allocation_zrl": str(rewards_cap),
@@ -495,7 +497,8 @@ def admin_partner_dashboard(admin: User = Depends(admin_user), db: Session = Dep
         "bonus_allocation_zrl": str(bonus),
         "configured_allocations_total_zrl": str(rewards_cap + reserve + bonus),
         "issued_rewards_zrl": str(issued),
-        "rewards_remaining_zrl": str(max(Decimal("0"), rewards_cap - issued - partner_pending)),
+        "future_farming_reserve_zrl": str(committed_farming),
+        "rewards_remaining_zrl": str(max(Decimal("0"), rewards_cap - committed_usage)),
         "allocation_config_valid": rewards_cap + reserve + bonus == total_cap,
         "partner_commissions_included_in_rewards": True,
         "partner_commissions_pending_zrl": str(partner_pending),
