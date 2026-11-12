@@ -24,6 +24,22 @@ app.add_middleware(CORSMiddleware, allow_origins=[settings.frontend_origin], all
 @app.on_event("startup")
 async def startup():
     Base.metadata.create_all(bind=engine)
+    # Seed the public equipment catalog without modifying existing equipment or user balances.
+    with Session(engine) as catalog_db:
+        catalog_items = [
+            ("GPU-10", "GPU Miner", Decimal("5000"), Decimal("10")),
+            ("ASIC-50", "ASIC Miner", Decimal("25000"), Decimal("50")),
+            ("INDUSTRIAL-200", "Industrial Miner", Decimal("100000"), Decimal("200")),
+            ("ULTRA-500", "Ultra Industrial Miner", Decimal("250000"), Decimal("500")),
+        ]
+        for code, name, price, hashrate in catalog_items:
+            existing = catalog_db.scalar(select(Equipment).where(Equipment.code == code))
+            if existing is None:
+                catalog_db.add(Equipment(
+                    code=code, name=name, price_zrl=price,
+                    hashrate=hashrate, reward_per_day=Decimal("0"), enabled=True
+                ))
+        catalog_db.commit()
     # Singleton row serializes reward issuance across all users and app replicas.
     with Session(engine) as startup_db:
         if startup_db.get(MiningPoolState, 1) is None:
@@ -615,12 +631,11 @@ def equipment(db: Session = Depends(get_db), user: User = Depends(current_user))
 @app.post("/api/equipment/{equipment_id}/buy")
 def buy(equipment_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     item = db.get(Equipment, equipment_id)
-    if not item or not item.enabled: raise HTTPException(404, "Equipment unavailable")
-    # Demo purchase only: no token or SOL is charged.
-    db.add(UserEquipment(telegram_id=user.telegram_id, equipment_id=item.id, quantity=1))
-    db.add(Purchase(telegram_id=user.telegram_id, equipment_id=item.id, amount_zrl=0, idempotency_key=uuid4().hex))
-    db.commit()
-    return {"ok": True, "demo": True, "message": "Demo equipment added; no payment was taken."}
+    if not item or not item.enabled:
+        raise HTTPException(404, "Equipment unavailable")
+    # Never grant equipment for free. On-chain ZRL/SOL payment verification
+    # must be implemented before purchases can be enabled.
+    raise HTTPException(503, "Equipment purchases are not open yet. On-chain payment verification is being prepared.")
 
 @app.post("/api/rewards/claim")
 def claim(user: User = Depends(current_user), db: Session = Depends(get_db)):
