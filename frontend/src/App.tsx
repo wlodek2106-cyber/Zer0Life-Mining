@@ -39,6 +39,7 @@ export default function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [equipment, setEquipment] = useState<Equipment[]>([]);
+  const [purchaseBusy, setPurchaseBusy] = useState(false);
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [period, setPeriod] = useState<Period>("week");
   const [error, setError] = useState("");
@@ -99,6 +100,31 @@ export default function App() {
       setError(e instanceof Error ? e.message : "Ошибка загрузки данных");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function buyEquipment(item: Equipment) {
+    if (purchaseBusy) return;
+    if (Number(me?.balance_zrl || 0) < Number(item.price_zrl)) {
+      setError("Недостаточно ZRL на внутреннем балансе.");
+      return;
+    }
+    if (!window.confirm("Купить " + item.name + " за " + fmt(item.price_zrl) + " ZRL?")) return;
+    setPurchaseBusy(true); setError("");
+    try {
+      const response = await fetch(API + "/api/equipment/" + item.id + "/buy", {
+        method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" }, body: "{}"
+      });
+      const data = await response.json();
+      if (!response.ok) throw Error(data.detail || "Не удалось купить оборудование.");
+      setMe(current => current ? { ...current, balance_zrl: data.balance_zrl } : current);
+      await load();
+      setFarmMessage("");
+      window.alert(item.name + " куплен. Добавлено оборудование: " + data.quantity);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка покупки.");
+    } finally {
+      setPurchaseBusy(false);
     }
   }
 
@@ -512,11 +538,11 @@ export default function App() {
         <div className="equipment-list">
           {equipment.map((item) => <article className="equipment-item" key={item.id}>
             <div className="equipment-icon">{item.hashrate >= 500 ? "⚡" : item.hashrate >= 200 ? "🏭" : item.hashrate >= 50 ? "🖥" : "⛏"}</div>
-            <div className="equipment-copy"><b>{item.name}</b><small>{item.code}</small><span>{fmt(item.hashrate)} TH/s · Mining equipment</span></div>
-            <div className="equipment-price"><b>{fmt(item.price_zrl)}</b><small>ZRL</small></div>
+            <div className="equipment-copy"><b>{item.name}</b><small>{item.code}</small><span>{fmt(item.hashrate)} TH/s · {fmt(item.reward_per_day)} ZRL/day</span></div>
+            <div className="equipment-price"><b>{fmt(item.price_zrl)}</b><small>ZRL</small><button className="equipment-buy-btn" onClick={()=>buyEquipment(item)} disabled={purchaseBusy || Number(me?.balance_zrl||0)<Number(item.price_zrl)}>{purchaseBusy ? "…" : "Buy"}</button></div>
           </article>)}
         </div>
-        <div className="info-note">Equipment hashrate is an in-game metric. Daily reward rates will be published separately after the reward schedule is finalized.</div>
+        <div className="info-note">Purchases use your internal game balance only. They do not send or transfer ZRL on Solana. Equipment rewards are virtual game rewards.</div>
         <span className="feature-state">CATALOG AVAILABLE · ON-CHAIN CHECKOUT IN DEVELOPMENT</span>
       </section>}
 
