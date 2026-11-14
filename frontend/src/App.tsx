@@ -66,6 +66,7 @@ export default function App() {
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [avatarMessage, setAvatarMessage] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [withdrawDestination, setWithdrawDestination] = useState("");
   const [withdrawId, setWithdrawId] = useState<number | null>(null);
   const [withdrawCode, setWithdrawCode] = useState("");
   const [withdrawBusy, setWithdrawBusy] = useState(false);
@@ -209,7 +210,7 @@ export default function App() {
     try {
       const response = await fetch(API + "/api/wallet/withdrawals/request", {
         method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ amount_zrl: withdrawAmount, destination_wallet: me?.wallet_address || "" })
+        body: JSON.stringify({ amount_zrl: withdrawAmount, destination_wallet: withdrawDestination.trim() })
       });
       const data = await response.json();
       if (!response.ok) throw Error(data.detail || "Could not request withdrawal.");
@@ -584,12 +585,11 @@ export default function App() {
 
         <div className="deposit-panel">
           <span className="eyebrow">WITHDRAW ZRL</span>
-          <h3>Withdraw to your verified Solana wallet</h3>
+          <h3>Withdraw ZRL to a Solana address</h3>
           <div className="detail-row"><span>Available internal balance</span><b>{fmt(me?.balance_zrl)} ZRL</b></div>
-          <div className="detail-row"><span>Verified destination</span><b>{me?.wallet_address ? me.wallet_address.slice(0,6)+"…"+me.wallet_address.slice(-6) : "Wallet not linked"}</b></div>
-          {!me?.wallet_address && <div className="info-note">Connect and verify your Phantom wallet in Wallet before requesting a withdrawal.</div>}
-          <input className="deposit-input" inputMode="decimal" value={withdrawAmount} onChange={e=>setWithdrawAmount(e.target.value)} placeholder="Amount of ZRL" disabled={withdrawBusy || !me?.wallet_address} />
-          <button className="wallet-connect-btn" onClick={requestWithdrawal} disabled={withdrawBusy || !me?.wallet_address || !withdrawAmount.trim()}>{withdrawBusy ? "Processing…" : "Request withdrawal & send Telegram code"}</button>
+          <input className="deposit-input" value={withdrawDestination} onChange={e=>setWithdrawDestination(e.target.value.trim())} placeholder="Solana destination wallet address" autoComplete="off" disabled={withdrawBusy} />
+          <input className="deposit-input" inputMode="decimal" value={withdrawAmount} onChange={e=>setWithdrawAmount(e.target.value)} placeholder="Amount of ZRL" disabled={withdrawBusy} />
+          <button className="wallet-connect-btn" onClick={requestWithdrawal} disabled={withdrawBusy || !withdrawAmount.trim() || !withdrawDestination.trim()}>{withdrawBusy ? "Processing…" : "Request withdrawal & send Telegram code"}</button>
           {withdrawId !== null && <div className="deposit-details">
             <b>Telegram confirmation</b>
             <p>Enter the 6-digit code sent by @Zer0lifeMining_bot. Code expires in 5 minutes.</p>
@@ -598,7 +598,7 @@ export default function App() {
             <button className="wallet-connect-btn secondary-action" onClick={()=>cancelWithdrawal(withdrawId)} disabled={withdrawBusy}>Cancel and return ZRL</button>
           </div>}
           {withdrawMessage && <div className="wallet-success" role="status">{withdrawMessage}</div>}
-          <div className="info-note">Security: requests are limited to your verified linked wallet. ZRL is reserved while confirmation is pending and returned if cancelled or expired. After code verification, payout remains pending review; on-chain transfers are currently disabled, so no tokens are sent automatically.</div>
+          <div className="info-note">Enter the Solana destination address and amount. A Telegram code confirms the request. ZRL is reserved while confirmation is pending and returned if cancelled or expired. On-chain payouts are not yet enabled; code confirmation alone does not send tokens.</div>
           <h3>Withdrawal history</h3>
           {withdrawals.length===0 ? <p>No withdrawal requests yet.</p> : withdrawals.map((item:any)=><article className="reward-item" key={item.id}>
             <div><b>{fmt(item.amount_zrl)} ZRL · {item.status.replaceAll("_"," ")}</b><small>{dateLabel(item.created_at)}</small><small>{item.destination_wallet.slice(0,7)}…{item.destination_wallet.slice(-6)}</small></div>
