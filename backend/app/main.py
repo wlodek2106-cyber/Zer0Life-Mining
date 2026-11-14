@@ -379,12 +379,12 @@ async def request_withdrawal(payload: dict, user: User = Depends(current_user), 
         raise HTTPException(400, "Enter a valid ZRL amount")
     if not amount.is_finite() or amount <= 0 or amount > Decimal("1000000000"):
         raise HTTPException(400, "Withdrawal amount must be greater than zero")
-    if not user.wallet_address:
-        raise HTTPException(400, "Connect and verify your Solana wallet first")
+    # User enters the payout destination directly. No Phantom connection or
+    # linked-wallet requirement is part of the shared-Treasury withdrawal flow.
     destination = str(payload.get("destination_wallet", "")).strip()
+    if not destination:
+        raise HTTPException(400, "Enter the Solana destination wallet address")
     decode_solana_address(destination)
-    if destination != user.wallet_address:
-        raise HTTPException(400, "Withdrawals can only be sent to your verified linked wallet")
     # Lock the account row to serialize concurrent withdrawal requests.
     locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
     if locked_user is None:
