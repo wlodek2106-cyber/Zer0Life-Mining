@@ -537,7 +537,7 @@ export default function App() {
         {!sectionBusy && equipment.length === 0 && <div className="empty-state">Equipment catalog is being prepared.</div>}
         <div className="equipment-list">
           {equipment.map((item) => <article className="equipment-item" key={item.id}>
-            <div className="equipment-icon">{item.hashrate >= 500 ? "⚡" : item.hashrate >= 200 ? "🏭" : item.hashrate >= 50 ? "🖥" : "⛏"}</div>
+            <div className="equipment-icon">{Number(item.hashrate) >= 500 ? "⚡" : Number(item.hashrate) >= 200 ? "🏭" : Number(item.hashrate) >= 50 ? "🖥" : "⛏"}</div>
             <div className="equipment-copy"><b>{item.name}</b><small>{item.code}</small><span>{fmt(item.hashrate)} TH/s · {fmt(item.reward_per_day)} ZRL/day</span></div>
             <div className="equipment-price"><b>{fmt(item.price_zrl)}</b><small>ZRL</small><button className="equipment-buy-btn" onClick={()=>buyEquipment(item)} disabled={purchaseBusy || Number(me?.balance_zrl||0)<Number(item.price_zrl)}>{purchaseBusy ? "…" : "Buy"}</button></div>
           </article>)}
