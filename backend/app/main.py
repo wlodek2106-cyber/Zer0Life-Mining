@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from uuid import uuid4
@@ -23,7 +24,9 @@ app.add_middleware(CORSMiddleware, allow_origins=[settings.frontend_origin], all
 
 @app.on_event("startup")
 async def startup():
+    global farming_scheduler_task
     Base.metadata.create_all(bind=engine)
+    farming_scheduler_task = asyncio.create_task(farming_auto_claim_loop())
     # Seed the public equipment catalog without modifying existing equipment or user balances.
     with Session(engine) as catalog_db:
         catalog_items = [
@@ -639,12 +642,41 @@ def equipment(db: Session = Depends(get_db), user: User = Depends(current_user))
 
 @app.post("/api/equipment/{equipment_id}/buy")
 def buy(equipment_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    item = db.get(Equipment, equipment_id)
-    if not item or not item.enabled:
+    # In-app catalog purchases are paid from the user's internal ZRL balance.
+    # This is not an on-chain transfer or a sale of blockchain tokens.
+    locked_user = db.scalar(select(User).where(User.telegram_id == user.telegram_id).with_for_update())
+    if locked_user is None:
+        raise HTTPException(401, "User account not found")
+    item = db.scalar(select(Equipment).where(Equipment.id == equipment_id, Equipment.enabled == True).with_for_update())
+    if item is None:
         raise HTTPException(404, "Equipment unavailable")
-    # Never grant equipment for free. On-chain ZRL/SOL payment verification
-    # must be implemented before purchases can be enabled.
-    raise HTTPException(503, "Equipment purchases are not open yet. On-chain payment verification is being prepared.")
+    price = Decimal(str(item.price_zrl))
+    balance = Decimal(str(locked_user.internal_balance_zrl))
+    if price <= 0:
+        raise HTTPException(409, "Equipment price is invalid")
+    if balance < price:
+        raise HTTPException(400, "Insufficient internal ZRL balance")
+    owned = db.scalar(select(UserEquipment).where(
+        UserEquipment.telegram_id == locked_user.telegram_id,
+        UserEquipment.equipment_id == item.id
+    ).with_for_update())
+    if owned is None:
+        owned = UserEquipment(telegram_id=locked_user.telegram_id, equipment_id=item.id,
+            quantity=1, last_accrued_at=datetime.now(timezone.utc))
+        db.add(owned)
+    else:
+        owned.quantity += 1
+    locked_user.internal_balance_zrl = balance - price
+    purchase_key = "equipment-purchase:" + uuid4().hex
+    db.add(Purchase(telegram_id=locked_user.telegram_id, equipment_id=item.id,
+        amount_zrl=price, idempotency_key=purchase_key))
+    db.add(RewardLedger(telegram_id=locked_user.telegram_id, amount_zrl=-price,
+        kind="equipment_purchase", idempotency_key=purchase_key))
+    db.commit()
+    return {"ok": True, "equipment_id": item.id, "equipment_name": item.name,
+        "quantity": owned.quantity, "price_zrl": str(price),
+        "balance_zrl": str(locked_user.internal_balance_zrl),
+        "payment": "internal_balance", "on_chain_payment": False}
 
 @app.post("/api/rewards/claim")
 def claim(user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -955,6 +987,36 @@ def leaderboard(user: User = Depends(current_user), db: Session = Depends(get_db
     order = {"Diamond": 5, "Platinum": 4, "Gold": 3, "Silver": 2, "Bronze": 1}
     rows.sort(key=lambda row: (order[row["rank"]], Decimal(row["team_volume_zrl"]), row["direct_referrals"]), reverse=True)
     return {"leaderboard": rows[:100], "rank_thresholds_status": "provisional"}
+
+farming_scheduler_task = None
+
+async def farming_auto_claim_loop():
+    # Single Render API instance; database daily-claim uniqueness and row locks
+    # remain the authoritative duplicate-prevention layer.
+    await asyncio.sleep(10)
+    while True:
+        try:
+            local_now = datetime.now(timezone.utc).astimezone(WARSAW)
+            if (local_now.hour, local_now.minute) >= (20, 0):
+                with Session(engine) as scheduler_db:
+                    user_ids = scheduler_db.scalars(select(FarmingPosition.telegram_id)
+                        .where(FarmingPosition.status == "active").distinct()).all()
+                    for telegram_id in user_ids:
+                        try:
+                            member = scheduler_db.get(User, telegram_id)
+                            if member is not None:
+                                claim_farming(member, scheduler_db)
+                        except HTTPException as exc:
+                            scheduler_db.rollback()
+                            if exc.status_code not in (400, 403, 409):
+                                print(f"Farming auto-claim skipped for user {telegram_id}: HTTP {exc.status_code}")
+                        except Exception as exc:
+                            scheduler_db.rollback()
+                            print(f"Farming auto-claim error for user {telegram_id}: {type(exc).__name__}")
+        except Exception as exc:
+            print(f"Farming scheduler cycle error: {type(exc).__name__}")
+        await asyncio.sleep(60)
+
 
 @app.post("/api/farming/claim")
 def claim_farming(user: User = Depends(current_user), db: Session = Depends(get_db)):
